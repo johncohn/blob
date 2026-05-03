@@ -50,7 +50,7 @@ void emitLedFeedback(uint8_t cc, uint8_t knobIdx) {
 // ---------- Phase 1: auto sweep pattern ----------
 
 uint8_t  patKnob  = 0;
-uint8_t  patVal   = MIDPOINT;
+int16_t  patVal   = MIDPOINT;   // int16_t so it can go negative without wrapping
 int8_t   patDir   = 1;
 bool     patDone  = false;
 unsigned long patTick = 0;
@@ -60,14 +60,15 @@ void runPattern() {
   if (millis() - patTick < TICK_MS) return;
   patTick = millis();
 
-  knobValue[patKnob] = patVal;
+  uint8_t sendVal = (uint8_t)constrain(patVal, 0, 127);
+  knobValue[patKnob] = sendVal;
 
   // send knob movement
-  sendCC(0, patKnob, patVal);
+  sendCC(0, patKnob, sendVal);
   Serial.print("[OUT KNOB] Ch1 CC");
   Serial.print(patKnob);
   Serial.print(" = ");
-  Serial.println(patVal);
+  Serial.println(sendVal);
 
   // send matching LED feedback
   emitLedFeedback(patKnob, patKnob);
@@ -78,7 +79,7 @@ void runPattern() {
   if (patDir > 0 && patVal >= 127) {
     patVal = 127;
     patDir = -1;
-  } else if (patDir < 0 && patVal <= 1) {
+  } else if (patDir < 0 && patVal <= 0) {
     patVal = 0;
     patDir = 1;
     // move to next knob, reset to midpoint
