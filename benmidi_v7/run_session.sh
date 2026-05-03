@@ -1,7 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-if [ ! -d "venv" ] || ! venv/bin/python -c "import rtmidi" 2>/dev/null; then
+if [ ! -d "venv" ] || ! venv/bin/python -c "import rtmidi; import mido" 2>/dev/null; then
     echo "Setting up virtual environment..."
     rm -rf venv
     python3 -m venv venv
@@ -17,4 +17,4 @@ if [ ! -d "venv" ] || ! venv/bin/python -c "import rtmidi" 2>/dev/null; then
     echo ""
 fi
 
-venv/bin/python midi_led_router.py
+venv/bin/python midi_session.py "$@"
