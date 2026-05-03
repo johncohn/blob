@@ -47,12 +47,13 @@ You'll see CC messages scrolling:
 
 Press **Ctrl+C** when Phase 1 is done (about 30 seconds) or whenever you want to stop. File is saved automatically.
 
-### View and edit in GarageBand
+### View, hear, and edit in GarageBand
 1. Open **GarageBand → Empty Project**
 2. **File → Open** → select `test.mid`
-3. The CC data appears graphically in the piano roll
-4. Copy, move, loop regions as needed
-5. **File → Export → Export Song to MIDI** → save as `edited.mid`
+3. GarageBand assigns a piano sound automatically — press **Space** to play and you'll hear the CC data mapped to audio. It won't sound musical (it's servo control data) but you'll hear the shape and rhythm of the knob movements, which helps when editing
+4. The CC data also appears graphically in the piano roll — double-click a region to open it
+5. Copy, move, loop regions as needed
+6. **File → Export → Export Song to MIDI** → save as `edited.mid`
 
 ### Play back
 ```bash

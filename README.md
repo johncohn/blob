@@ -48,11 +48,12 @@ cd /Users/jcohn/blob/benmidi_v7
 ```
 First run installs dependencies (~30 seconds). Then CC messages scroll as the Feather sweeps through all 9 knobs. Press **Ctrl+C** to stop and save.
 
-### View and edit in GarageBand
+### View, hear, and edit in GarageBand
 1. Open GarageBand → Empty Project
 2. **File → Open** → select `test.mid`
-3. Edit graphically in the piano roll
-4. **File → Export → Export Song to MIDI** → save as `edited.mid`
+3. Press **Space** to play — GarageBand maps the CC data to a piano sound so you can hear the shape of the knob movements
+4. Edit graphically in the piano roll
+5. **File → Export → Export Song to MIDI** → save as `edited.mid`
 
 ### Play back
 ```bash
