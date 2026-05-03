@@ -1,0 +1,150 @@
+#include "MIDIUSB.h"
+#include <Adafruit_NeoPixel.h>
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
+// ---------- Config ----------
+#define NEOPIXEL_PIN 8
+#define NUM_PIXELS   1
+
+#define PCA9685_ADDR 0x40    // change if you jumpered A0..A5
+#define SERVO_FREQ   50      // 50 Hz for hobby servos
+#define USMIN        2400    // min pulse (you’re using inverted mapping)
+#define USMAX        600     // max pulse
+
+// ---------- Globals ----------
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDR);
+
+uint32_t knobColors[16];
+
+// ---------- Helpers ----------
+static inline void writeServoUS(uint8_t ch, uint16_t us) {
+  // keep it sane while debugging
+  us = constrain(us, 500, 2500);
+  pwm.writeMicroseconds(ch, us);
+}
+
+void processInput(uint8_t control, uint8_t midiValue) {
+  // If your first knob is CC0, this maps CC0->CH0, CC1->CH1, etc.
+  // If your first knob is CC1, change to: uint8_t servoChannel = (control - 1) % 16;
+  uint8_t servoChannel = (control) % 16;
+
+  // map 0..127 -> USMIN..USMAX (your values invert direction; that’s fine)
+  uint16_t pulse = map(midiValue, 0, 127, USMIN, USMAX);
+  writeServoUS(servoChannel, pulse);
+
+  // NeoPixel feedback
+  uint32_t color = knobColors[servoChannel];
+  uint8_t brightness = midiValue * 2;
+  if (brightness > 255) brightness = 255;
+  pixels.setBrightness(brightness);
+  pixels.setPixelColor(0, color);
+  pixels.show();
+
+  // debug
+  Serial.print("CC "); Serial.print(control);
+  Serial.print("  val "); Serial.print(midiValue);
+  Serial.print("  -> CH "); Serial.print(servoChannel);
+  Serial.print("  pulse(us) "); Serial.println(pulse);
+}
+
+void processSerialCommand() {
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (!input.length()) return;
+
+    int commaIndex = input.indexOf(',');
+    if (commaIndex == -1) {
+      Serial.println("Error: Expected control,value");
+      return;
+    }
+    int control = input.substring(0, commaIndex).toInt();
+    int value   = input.substring(commaIndex + 1).toInt();
+    Serial.print("Manual: control="); Serial.print(control);
+    Serial.print(" value="); Serial.println(value);
+    processInput((uint8_t)control, (uint8_t)value);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  // while (!Serial) { }  // optional
+
+  // ---------- I2C first ----------
+  Wire.begin();
+
+  Serial.println("Scanning I2C...");
+  bool foundAny = false;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.print("  Found I2C device at 0x");
+      Serial.println(addr, HEX);
+      foundAny = true;
+      delay(3);
+    }
+  }
+  if (!foundAny) Serial.println("  (No I2C devices found)");
+
+  // ---------- PCA9685 ----------
+  Serial.println("Init PCA9685...");
+  pwm.begin();
+  pwm.setOscillatorFrequency(27000000); // Adafruit board nominal
+  pwm.setPWMFreq(SERVO_FREQ);
+  delay(10);
+
+  // Prove-it-moves on CH0
+  writeServoUS(0, 1500);
+  delay(300);
+  writeServoUS(0, 1200);
+  delay(200);
+  writeServoUS(0, 1800);
+  delay(200);
+  writeServoUS(0, 1500);
+  Serial.println("Boot pulse sent to CH0");
+
+  // ---------- NeoPixel ----------
+  pixels.begin();
+  pixels.clear();
+  pixels.setBrightness(20);
+  pixels.show();
+
+  // colors per channel
+  knobColors[0]  = pixels.Color(255, 0, 0);      // 0: Red
+  knobColors[1]  = pixels.Color(0, 255, 0);      // 1: Green
+  knobColors[2]  = pixels.Color(0, 0, 255);      // 2: Blue
+  knobColors[3]  = pixels.Color(255, 255, 0);    // 3: Yellow
+  knobColors[4]  = pixels.Color(255, 0, 255);    // 4: Magenta
+  knobColors[5]  = pixels.Color(0, 255, 255);    // 5: Cyan
+  knobColors[6]  = pixels.Color(255, 128, 0);    // 6: Orange
+  knobColors[7]  = pixels.Color(128, 0, 255);    // 7: Purple
+  knobColors[8]  = pixels.Color(255, 255, 255);  // 8: White
+  knobColors[9]  = pixels.Color(128, 128, 128);  // 9: Gray
+  knobColors[10] = pixels.Color(128, 64, 0);     // 10: Brown
+  knobColors[11] = pixels.Color(0, 128, 64);     // 11: Teal
+  knobColors[12] = pixels.Color(0, 64, 128);     // 12: Deep Blue
+  knobColors[13] = pixels.Color(64, 0, 128);     // 13: Dark Purple
+  knobColors[14] = pixels.Color(128, 0, 64);     // 14: Maroon-ish
+  knobColors[15] = pixels.Color(0, 128, 255);    // 15: Sky Blue
+
+  Serial.println("Setup complete. Enter 'control,value' or turn a knob.");
+}
+
+void loop() {
+  processSerialCommand();
+
+  // MIDI over USB (MIDIUSB)
+  midiEventPacket_t rx = MidiUSB.read();
+  if (rx.header != 0) {
+    // Control Change (0xB0..0xBF)
+    if ((rx.byte1 & 0xF0) == 0xB0) {
+      uint8_t control   = rx.byte2;
+      uint8_t midiValue = rx.byte3;
+      processInput(control, midiValue);
+    }
+  }
+
+  delay(1);
+}
