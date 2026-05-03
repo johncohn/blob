@@ -31,16 +31,13 @@ archive/
    - If Feather is missing: try a different USB cable or reflash the firmware
 
 ### Start the LED Router (1 minute)
-First time only — install the dependency:
-```bash
-pip3 install python-rtmidi
-```
-
-Then run the router:
+Open **Terminal** and run:
 ```bash
 cd /Users/jcohn/blob/benmidi_v7
-python3 midi_led_router.py
+./run_router.sh
 ```
+The first time this runs it creates a virtual environment and installs the dependency automatically — takes about 30 seconds. Every run after that starts instantly.
+
 It prints the routing and sits quietly. **Leave Terminal open.**
 If it can't find the ports by name, it will ask you to type the number — just pick from the printed list.
 

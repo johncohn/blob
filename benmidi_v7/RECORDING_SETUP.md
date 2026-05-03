@@ -53,37 +53,35 @@ There is also a **fallback** at the end of this guide — GarageBand only, no Py
 
 This routes the Feather's LED feedback messages back to the Twister so the ring lights work during recording and playback. Skip to Part 3 if you want to start without this.
 
-### Install python-rtmidi
+### Run the Router
+
+The script uses a Python virtual environment so it doesn't touch your system Python installation. Everything is self-contained in a `venv/` folder inside `benmidi_v7/`.
 
 Open **Terminal** (Applications → Utilities → Terminal) and run:
 
 ```bash
-pip3 install python-rtmidi
+cd /Users/jcohn/blob/benmidi_v7
+./run_router.sh
 ```
 
-If that gives a "pip3 not found" error, try:
+**First time only:** the script will create the virtual environment and install `python-rtmidi` automatically. This takes about 30 seconds and you'll see:
 
-```bash
-python3 -m pip install python-rtmidi
+```
+First run: creating virtual environment...
+Installing python-rtmidi...
+Ready.
 ```
 
-If Python 3 itself isn't installed, install it via Homebrew:
+Every subsequent run skips straight to launching the router.
+
+If Python 3 itself isn't installed, install it via Homebrew first:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install python
 ```
 
-Then retry the `pip3 install python-rtmidi` command.
-
-### Run the Router
-
-In Terminal, navigate to this folder and run the script:
-
-```bash
-cd /Users/jcohn/blob/benmidi_v7
-python3 midi_led_router.py
-```
+Then run `./run_router.sh` again.
 
 You will see something like:
 
@@ -222,8 +220,11 @@ If you want a standalone `.mid` file:
 - If already open: quit GarageBand, make sure Feather is connected, reopen
 
 **Python script says "No module named rtmidi"**
-- Run `pip3 install python-rtmidi` again
-- If you have multiple Python installs: `python3 -m pip install python-rtmidi`
+- Delete the `venv/` folder and run `./run_router.sh` again — it will rebuild from scratch:
+  ```bash
+  rm -rf /Users/jcohn/blob/benmidi_v7/venv
+  ./run_router.sh
+  ```
 
 **Python script can't find the Feather or Twister by name**
 - It will prompt you to type the port number — just look at the printed list and enter the right number
