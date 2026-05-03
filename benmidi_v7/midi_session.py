@@ -37,9 +37,6 @@ TICKS_PER_BEAT = 480
 DEFAULT_TEMPO  = 500000   # 120 BPM
 NOTE_DURATION  = 120      # ticks — short staccato note for audio preview
 
-# CC 0-8 → musical notes C4 through D5 so each knob has a distinct pitch
-CC_TO_NOTE = {0:60, 1:62, 2:64, 3:65, 4:67, 5:69, 6:71, 7:72, 8:74}
-
 
 # ── port detection ────────────────────────────────────────────────────────────
 
@@ -77,17 +74,28 @@ def open_out(idx):
 
 def save_midi(filename, captured):
     """
-    Save captured events to a .mid file with two tracks:
-      Track 0 (CC data)    — used by run_session.sh play for servo control
-      Track 1 (note data)  — used by GarageBand for audio preview
+    Save captured events to a type-1 .mid file:
+      Track 0: tempo map
+      Track 1: CC data — used by run_session.sh play for servo control
+      Tracks 2-10: one note track per knob (CC 0-8) for GarageBand audio preview
+        - note pitch  = CC value (0-127) → shows servo position in piano roll
+        - note velocity = 100 (fixed)
+        - separate track per knob so GarageBand creates one instrument track each
     """
-    mid   = mido.MidiFile(ticks_per_beat=TICKS_PER_BEAT)
+    from collections import defaultdict
+
+    mid           = mido.MidiFile(type=1, ticks_per_beat=TICKS_PER_BEAT)
     secs_per_tick = DEFAULT_TEMPO / 1_000_000 / TICKS_PER_BEAT
 
-    # ── track 0: CC messages ──
+    # ── track 0: tempo map (required for type-1) ──
+    tempo_track = mido.MidiTrack()
+    mid.tracks.append(tempo_track)
+    tempo_track.append(mido.MetaMessage('set_tempo', tempo=DEFAULT_TEMPO, time=0))
+
+    # ── track 1: CC data ──
     cc_track = mido.MidiTrack()
     mid.tracks.append(cc_track)
-    cc_track.append(mido.MetaMessage('set_tempo', tempo=DEFAULT_TEMPO, time=0))
+    cc_track.append(mido.MetaMessage('track_name', name='Servo CC', time=0))
     prev_tick = 0
     for t, msg in captured:
         tick  = int(t / secs_per_tick)
@@ -99,37 +107,46 @@ def save_midi(filename, captured):
             cc_track.append(mido.Message('control_change', channel=ch,
                                          control=msg[1], value=msg[2], time=delta))
         elif status == 0x90:
-            cc_track.append(mido.Message('note_on', channel=ch,
+            cc_track.append(mido.Message('note_on',  channel=ch,
                                          note=msg[1], velocity=msg[2], time=delta))
         elif status == 0x80:
             cc_track.append(mido.Message('note_off', channel=ch,
                                          note=msg[1], velocity=msg[2], time=delta))
 
-    # ── track 1: note preview (so GarageBand has audio to play) ──
-    note_track = mido.MidiTrack()
-    mid.tracks.append(note_track)
-    note_track.append(mido.MetaMessage('set_tempo', tempo=DEFAULT_TEMPO, time=0))
-    note_track.append(mido.MetaMessage('track_name', name='Preview (audio)', time=0))
-    prev_tick = 0
+    # ── tracks 2-10: one note track per knob ──
+    # Collect (abs_tick, note_on), (abs_tick + NOTE_DURATION, note_off) per knob
+    knob_events = defaultdict(list)
     for t, msg in captured:
         if (msg[0] & 0xF0) != 0xB0:
             continue
-        cc  = msg[1]
-        val = msg[2]
-        if cc not in CC_TO_NOTE or val == 0:
+        cc, val = msg[1], msg[2]
+        if cc > 8 or val == 0:
             continue
-        note     = CC_TO_NOTE[cc]
-        velocity = max(1, val)
-        tick     = int(t / secs_per_tick)
-        on_delta = max(0, tick - prev_tick)
-        note_track.append(mido.Message('note_on',  note=note, velocity=velocity, time=on_delta))
-        note_track.append(mido.Message('note_off', note=note, velocity=0,        time=NOTE_DURATION))
-        prev_tick = tick + NOTE_DURATION
+        abs_tick = int(t / secs_per_tick)
+        note     = max(1, val)   # pitch = servo value so height = speed
+        knob_events[cc].append((abs_tick,                'on',  note))
+        knob_events[cc].append((abs_tick + NOTE_DURATION,'off', note))
+
+    for cc in range(9):
+        track = mido.MidiTrack()
+        mid.tracks.append(track)
+        track.append(mido.MetaMessage('track_name', name=f'Knob {cc + 1}', time=0))
+        events = sorted(knob_events.get(cc, []), key=lambda e: e[0])
+        prev_tick = 0
+        for abs_tick, kind, note in events:
+            delta = max(0, abs_tick - prev_tick)
+            prev_tick = abs_tick
+            if kind == 'on':
+                track.append(mido.Message('note_on',  channel=cc, note=note,
+                                          velocity=100, time=delta))
+            else:
+                track.append(mido.Message('note_off', channel=cc, note=note,
+                                          velocity=0,   time=delta))
 
     mid.save(filename)
     print(f"\nSaved {len(captured)} messages → {filename}")
-    print(f"  Track 0: CC data (servo playback)")
-    print(f"  Track 1: Note preview (open in GarageBand to hear)")
+    print(f"  Track 1 : Servo CC data (playback)")
+    print(f"  Tracks 2-10: Knob 1-9 audio preview (note height = servo position)")
 
 
 def close_all(*ports):
