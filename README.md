@@ -36,7 +36,7 @@ Open **Terminal** and run:
 cd /Users/jcohn/blob/benmidi_v7
 ./run_router.sh
 ```
-The first time this runs it creates a virtual environment and installs the dependency automatically — takes about 30 seconds. Every run after that starts instantly.
+The first time this runs it creates a virtual environment and installs `python-rtmidi` directly from public PyPI (bypassing any corporate package registry). Takes about 30 seconds. Every run after that starts instantly. If a previous install failed for any reason, re-running the script detects and fixes it automatically.
 
 It prints the routing and sits quietly. **Leave Terminal open.**
 If it can't find the ports by name, it will ask you to type the number — just pick from the printed list.

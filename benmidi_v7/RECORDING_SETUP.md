@@ -55,7 +55,7 @@ This routes the Feather's LED feedback messages back to the Twister so the ring 
 
 ### Run the Router
 
-The script uses a Python virtual environment so it doesn't touch your system Python installation. Everything is self-contained in a `venv/` folder inside `benmidi_v7/`.
+The script uses a Python virtual environment so it doesn't touch your system Python installation. Everything is self-contained in a `venv/` folder inside `benmidi_v7/`. It installs `python-rtmidi` directly from public PyPI, bypassing any corporate or managed package registry that may be configured on your machine.
 
 Open **Terminal** (Applications → Utilities → Terminal) and run:
 
@@ -64,15 +64,15 @@ cd /Users/jcohn/blob/benmidi_v7
 ./run_router.sh
 ```
 
-**First time only:** the script will create the virtual environment and install `python-rtmidi` automatically. This takes about 30 seconds and you'll see:
+**First time only:** the script creates the virtual environment and installs `python-rtmidi` automatically. This takes about 30 seconds and you'll see:
 
 ```
-First run: creating virtual environment...
-Installing python-rtmidi...
+Setting up virtual environment...
+Installing python-rtmidi from public PyPI...
 Ready.
 ```
 
-Every subsequent run skips straight to launching the router.
+Every subsequent run skips straight to launching the router. If a previous install failed for any reason, re-running the script detects the broken state and rebuilds automatically.
 
 If Python 3 itself isn't installed, install it via Homebrew first:
 
@@ -220,11 +220,7 @@ If you want a standalone `.mid` file:
 - If already open: quit GarageBand, make sure Feather is connected, reopen
 
 **Python script says "No module named rtmidi"**
-- Delete the `venv/` folder and run `./run_router.sh` again — it will rebuild from scratch:
-  ```bash
-  rm -rf /Users/jcohn/blob/benmidi_v7/venv
-  ./run_router.sh
-  ```
+- Just run `./run_router.sh` again — it detects the broken install and rebuilds the virtual environment automatically
 
 **Python script can't find the Feather or Twister by name**
 - It will prompt you to type the port number — just look at the printed list and enter the right number
