@@ -2,6 +2,9 @@
 """
 midi_session.py  —  record and play back MIDI for the servo art piece
 
+  capture: records from any single MIDI device — use this when only the
+           Feather (test sketch) is connected, no Twister needed
+
   record:  captures knob movements from the Twister, forwards live to the
            Feather for real-time servo control, routes LED feedback
            Feather → Twister, saves everything to a .mid file
@@ -9,15 +12,17 @@ midi_session.py  —  record and play back MIDI for the servo art piece
   play:    reads a .mid file, sends it to the Feather with correct timing,
            routes LED feedback Feather → Twister throughout
 
-The saved .mid file can be opened in GarageBand, Logic Pro, Reaper, or any
-DAW for graphical editing. Export back to .mid and play with this script.
+The saved .mid file can be opened in GarageBand or any DAW for graphical
+editing. Export back to .mid and play with this script.
 
 Usage:
+    python3 midi_session.py capture [output.mid]
     python3 midi_session.py record [output.mid]
     python3 midi_session.py play <file.mid> [--loop]
 
 Examples:
-    python3 midi_session.py record session1.mid
+    python3 midi_session.py capture test.mid        # Feather only
+    python3 midi_session.py record session1.mid     # Twister + Feather
     python3 midi_session.py play session1.mid
     python3 midi_session.py play session1.mid --loop
 """
@@ -84,6 +89,78 @@ def start_led_router(feather_in, twister_out):
         if (msg[0] & 0xF0) == 0xB0:
             print(f"  [LED ] Ch{(msg[0] & 0x0F) + 1}  CC{msg[1]:3d} = {msg[2]:3d}  → Twister")
     feather_in.set_callback(on_led)
+
+
+# ── capture (single device, no routing) ──────────────────────────────────────
+
+def capture(filename):
+    """Record from any single MIDI device — no Twister or routing needed."""
+    ins, _ = list_ports()
+
+    print("\nAvailable MIDI inputs:")
+    for i, p in enumerate(ins):
+        print(f"  {i}: {p}")
+    idx, name = find_port(ins, ["feather", "m4", "samd", "twister", "fighter"])
+    if idx is None:
+        idx  = int(input("\nPick input port index: "))
+        name = ins[idx]
+    print(f"\nCapturing from: {name}")
+
+    source = open_in(idx)
+
+    captured   = []
+    start_time = [None]
+    lock       = threading.Lock()
+
+    def on_msg(event, _):
+        msg, _ = event
+        now = time.time()
+        if start_time[0] is None:
+            start_time[0] = now
+        elapsed = now - start_time[0]
+        with lock:
+            captured.append((elapsed, list(msg)))
+        if (msg[0] & 0xF0) == 0xB0:
+            print(f"  [CAP ] Ch{(msg[0] & 0x0F) + 1}  CC{msg[1]:3d} = {msg[2]:3d}")
+
+    source.set_callback(on_msg)
+
+    print(f"Recording to {filename}")
+    print("Ctrl+C to stop and save.\n")
+
+    try:
+        while True:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+
+    mid   = mido.MidiFile(ticks_per_beat=TICKS_PER_BEAT)
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+    track.append(mido.MetaMessage('set_tempo', tempo=DEFAULT_TEMPO, time=0))
+
+    secs_per_tick = DEFAULT_TEMPO / 1_000_000 / TICKS_PER_BEAT
+    prev_tick = 0
+    with lock:
+        for t, msg in captured:
+            tick  = int(t / secs_per_tick)
+            delta = max(0, tick - prev_tick)
+            prev_tick = tick
+            status = msg[0] & 0xF0
+            ch     = msg[0] & 0x0F
+            if status == 0xB0:
+                track.append(mido.Message('control_change', channel=ch,
+                                          control=msg[1], value=msg[2], time=delta))
+            elif status == 0x90:
+                track.append(mido.Message('note_on', channel=ch,
+                                          note=msg[1], velocity=msg[2], time=delta))
+            elif status == 0x80:
+                track.append(mido.Message('note_off', channel=ch,
+                                          note=msg[1], velocity=msg[2], time=delta))
+
+    mid.save(filename)
+    print(f"\nSaved {len(captured)} messages → {filename}")
+    source.close_port()
 
 
 # ── record ────────────────────────────────────────────────────────────────────
@@ -207,13 +284,17 @@ def play(filename, loop=False):
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ('record', 'play'):
+    if len(sys.argv) < 2 or sys.argv[1] not in ('capture', 'record', 'play'):
         print(__doc__)
         sys.exit(1)
 
     cmd = sys.argv[1]
 
-    if cmd == 'record':
+    if cmd == 'capture':
+        filename = sys.argv[2] if len(sys.argv) > 2 else 'session.mid'
+        capture(filename)
+
+    elif cmd == 'record':
         filename = sys.argv[2] if len(sys.argv) > 2 else 'session.mid'
         record(filename)
 
