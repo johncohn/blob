@@ -347,17 +347,34 @@ def record(filename):
 def play(filename, loop=False, speed=1.0):
     ins, outs = list_ports()
 
+    TWISTER_KEYS = ["twister", "fighter", "widi", "cme"]
+    FEATHER_KEYS = ["feather", "m4", "samd"]
+
     print("\nDetecting MIDI ports...")
-    twister_out_idx = pick(outs, ["twister", "fighter"],   "Twister out")
-    feather_out_idx = pick(outs, ["feather", "m4", "samd"],"Feather out")
-    feather_in_idx  = pick(ins,  ["feather", "m4", "samd"],"Feather in ")
+    print("  Inputs:  " + ", ".join(f"{i}:{p}" for i, p in enumerate(ins)))
+    print("  Outputs: " + ", ".join(f"{i}:{p}" for i, p in enumerate(outs)))
     print()
 
-    twister_out = open_out(twister_out_idx)
+    feather_out_idx, feather_out_name = choose_port(outs, FEATHER_KEYS, "Feather output")
+    feather_in_idx,  feather_in_name  = choose_port(ins,  FEATHER_KEYS, "Feather input")
+    print(f"  Feather out : {feather_out_name}")
+    print(f"  Feather in  : {feather_in_name}")
+
+    twister_out_idx, twister_out_name = find_port(outs, TWISTER_KEYS)
+    if twister_out_idx is not None:
+        print(f"  Twister/WIDI: {twister_out_name}  (LED rings)")
+    else:
+        print(f"  Twister/WIDI: not found — LED rings will not update")
+    print()
+
     feather_out = open_out(feather_out_idx)
     feather_in  = open_in (feather_in_idx)
 
-    start_led_router(feather_in, twister_out)
+    if twister_out_idx is not None:
+        twister_out = open_out(twister_out_idx)
+        start_led_router(feather_in, twister_out)
+    else:
+        twister_out = None
 
     mid    = mido.MidiFile(filename)
     n_msgs = sum(1 for t in mid.tracks for m in t if not m.is_meta)
@@ -372,14 +389,15 @@ def play(filename, loop=False, speed=1.0):
 
     try:
         while True:
-            for msg in mid:          # iterate manually so we can scale timing
+            for msg in mid:
                 if msg.is_meta:
                     continue
                 if msg.time > 0:
                     time.sleep(msg.time / speed)
-                raw = msg.bytes()
-                feather_out.send_message(raw)
-                if (raw[0] & 0xF0) == 0xB0:
+                raw    = msg.bytes()
+                status = raw[0] & 0xF0
+                if status in (0xB0, 0xB1):   # CC only — note events stay in file for GarageBand, never sent to Feather
+                    feather_out.send_message(raw)
                     print(f"  [PLAY] Ch{(raw[0] & 0x0F) + 1}  CC{raw[1]:3d} = {raw[2]:3d}  → Feather")
             if not loop:
                 break
@@ -388,7 +406,10 @@ def play(filename, loop=False, speed=1.0):
         pass
 
     print("\nDone.")
-    close_all(twister_out, feather_out, feather_in)
+    ports_to_close = [feather_out, feather_in]
+    if twister_out:
+        ports_to_close.append(twister_out)
+    close_all(*ports_to_close)
 
 
 # ── main ──────────────────────────────────────────────────────────────────────

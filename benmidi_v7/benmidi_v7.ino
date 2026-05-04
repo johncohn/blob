@@ -18,17 +18,19 @@
 #define DOUBLE_CLICK_MS 400  // Max time between clicks for double-click (increased for debounce)
 #define RETRACT_TIME_MS 50000 // 50 seconds for full retraction
 
-// Knob to servo mapping (matches v5 behavior: CC number maps directly to servo)
-// CC 0 → servo 0 (knob 1)
-// CC 1 → servo 1 (knob 2)
-// ...
-// CC 8 → servo 8 (knob 9)
-// CC 9-14 → servos 9-14 (not used, we only have 9 servos)
-// CC 15 → master button (knob 16, not mapped to servo)
+// Twister is a 4x4 grid. Servos occupy the top-left 3x3, so every 4th knob
+// (the rightmost column) and the entire bottom row are unmapped.
+//
+// Twister layout → servo index:
+//   knob 1(CC0)→0  knob 2(CC1)→1  knob 3(CC2)→2  knob 4(CC3)→-
+//   knob 5(CC4)→3  knob 6(CC5)→4  knob 7(CC6)→5  knob 8(CC7)→-
+//   knob 9(CC8)→6  knob10(CC9)→7  knob11(CC10)→8 knob12(CC11)→-
+//   knob13(CC12)→- knob14(CC13)→- knob15(CC14)→- knob16(CC15)→master
 const uint8_t CC_TO_SERVO[128] = {
-  0, 1, 2, 3, 4, 5, 6, 7, 8,                        // CC 0-8 → servos 0-8
-  9, 10, 11, 12, 13, 14,                            // CC 9-14 → servos 9-14 (unused)
-  255,                                              // CC 15 → master button (not a servo)
+  0,   1,   2,   255,  // CC  0- 3: row 1 (knobs 1-3 active, knob 4 skipped)
+  3,   4,   5,   255,  // CC  4- 7: row 2 (knobs 5-7 active, knob 8 skipped)
+  6,   7,   8,   255,  // CC  8-11: row 3 (knobs 9-11 active, knob 12 skipped)
+  255, 255, 255, 255,  // CC 12-15: row 4 (bottom row — CC 15 = master button)
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 16-31
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 32-47
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 48-63
