@@ -117,33 +117,36 @@ def save_midi(filename, captured):
                                          note=msg[1], velocity=msg[2], time=delta))
 
     # ── tracks 2-10: one note track per knob ──
-    # Collect (abs_tick, note_on), (abs_tick + NOTE_DURATION, note_off) per knob
+    # Twister bank 2: active CCs are 16-18, 20-22, 24-26 → track indices 0-8
+    CC_TO_TRACK = {16:0, 17:1, 18:2, 20:3, 21:4, 22:5, 24:6, 25:7, 26:8}
+
     knob_events = defaultdict(list)
     for t, msg in captured:
         if (msg[0] & 0xF0) != 0xB0:
             continue
         cc, val = msg[1], msg[2]
-        if cc > 8 or val == 0:
+        track_idx = CC_TO_TRACK.get(cc)
+        if track_idx is None or val == 0:
             continue
         abs_tick = int(t / secs_per_tick)
         note     = max(1, val)   # pitch = servo value so height = speed
-        knob_events[cc].append((abs_tick,                'on',  note))
-        knob_events[cc].append((abs_tick + NOTE_DURATION,'off', note))
+        knob_events[track_idx].append((abs_tick,                'on',  note))
+        knob_events[track_idx].append((abs_tick + NOTE_DURATION,'off', note))
 
-    for cc in range(9):
+    for track_idx in range(9):
         track = mido.MidiTrack()
         mid.tracks.append(track)
-        track.append(mido.MetaMessage('track_name', name=f'Knob {cc + 1}', time=0))
-        events = sorted(knob_events.get(cc, []), key=lambda e: e[0])
+        track.append(mido.MetaMessage('track_name', name=f'Knob {track_idx + 1}', time=0))
+        events = sorted(knob_events.get(track_idx, []), key=lambda e: e[0])
         prev_tick = 0
         for abs_tick, kind, note in events:
             delta = max(0, abs_tick - prev_tick)
             prev_tick = abs_tick
             if kind == 'on':
-                track.append(mido.Message('note_on',  channel=cc, note=note,
+                track.append(mido.Message('note_on',  channel=track_idx, note=note,
                                           velocity=100, time=delta))
             else:
-                track.append(mido.Message('note_off', channel=cc, note=note,
+                track.append(mido.Message('note_off', channel=track_idx, note=note,
                                           velocity=0,   time=delta))
 
     mid.save(filename)
