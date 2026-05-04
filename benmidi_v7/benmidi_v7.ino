@@ -121,11 +121,6 @@ void resetMidpoint(uint8_t servoIdx) {
 
   // Stop servo
   writeServoUS(SERVO_TO_CHANNEL[servoIdx], 1500);
-
-  Serial.print("Servo ");
-  Serial.print(servoIdx);
-  Serial.print(" midpoint reset to ");
-  Serial.println(currentKnobValue[servoIdx]);
 }
 
 // Start retraction for a servo
@@ -137,11 +132,7 @@ void startRetraction(uint8_t servoIdx) {
 
   // Full speed retraction (counterclockwise = lower pulse)
   // USMAX = 600 (minimum pulse) = retract direction
-  writeServoUS(SERVO_TO_CHANNEL[servoIdx], USMAX); // Full speed retract
-
-  Serial.print("Servo ");
-  Serial.print(servoIdx);
-  Serial.println(" retracting at full speed");
+  writeServoUS(SERVO_TO_CHANNEL[servoIdx], USMAX);
 }
 
 // Send MIDI CC back to Twister to control LED ring
@@ -181,8 +172,7 @@ void processButtonPress(uint8_t cc) {
     waitingForDoubleClick[cc] = false;
     clickCount[cc] = 0; // Reset count
 
-    Serial.print("Double-click detected on CC ");
-    Serial.println(cc);
+
   } else {
     // First click or too long since last click
     waitingForDoubleClick[cc] = true;
@@ -193,7 +183,6 @@ void processButtonPress(uint8_t cc) {
 
   // Handle master button (CC 31 on Channel 2)
   if (cc == MASTER_BUTTON_CC) {
-    Serial.println("Master double-click: Retracting all servos");
     for (uint8_t i = 0; i < NUM_SERVOS; i++) {
       startRetraction(i);
     }
@@ -203,8 +192,6 @@ void processButtonPress(uint8_t cc) {
   // Handle individual servo buttons using mapping
   int8_t servoIdx = ccToServo(cc);
   if (servoIdx >= 0) {
-    Serial.print("Double-click on servo ");
-    Serial.println(servoIdx);
     startRetraction(servoIdx);
   }
 }
@@ -220,7 +207,6 @@ void checkPendingClicks() {
 
       // Process as single-click
       if (i == MASTER_BUTTON_CC) {
-        Serial.println("Master single-click: Resetting all midpoints");
         for (uint8_t j = 0; j < NUM_SERVOS; j++) {
           resetMidpoint(j);
         }
@@ -228,8 +214,6 @@ void checkPendingClicks() {
         // Use mapping to find servo
         int8_t servoIdx = ccToServo(i);
         if (servoIdx >= 0) {
-          Serial.print("Single-click on servo ");
-          Serial.println(servoIdx);
           resetMidpoint(servoIdx);
         }
       }
@@ -239,7 +223,6 @@ void checkPendingClicks() {
 
 void processInput(uint8_t control, uint8_t midiValue) {
   if (control >= 128) return;
-  Serial.print("CC "); Serial.print(control); Serial.print(" val "); Serial.println(midiValue);
   uint8_t servoIdx = CC_TO_SERVO[control];
   if (servoIdx == 255 || servoIdx >= NUM_SERVOS) return;
 
@@ -249,14 +232,10 @@ void processInput(uint8_t control, uint8_t midiValue) {
   // Mark servo as active on first message (midpoint stays at 64 from setup)
   if (!knobInitialized[servoIdx]) {
     knobInitialized[servoIdx] = true;
-    Serial.print("Servo "); Serial.print(servoIdx + 1);
-    Serial.print(" active, midpoint="); Serial.println(servoMidpoint[servoIdx]);
   }
 
   // If retracting, cancel retraction and set new midpoint
   if (isRetracting[servoIdx]) {
-    Serial.print("Retraction canceled for servo ");
-    Serial.println(servoIdx);
     resetMidpoint(servoIdx);
     updateKnobLED(control, servoIdx);
     return;
@@ -279,61 +258,16 @@ void processInput(uint8_t control, uint8_t midiValue) {
   pixels.show();
 
   // debug
-  Serial.print("knob "); Serial.print(control - 15);
-  Serial.print("  CC "); Serial.print(control);
-  Serial.print("  val "); Serial.print(midiValue);
-  Serial.print("  → servo "); Serial.print(servoIdx + 1);
-  Serial.print("  mid "); Serial.print(servoMidpoint[servoIdx]);
-  Serial.print("  spd "); Serial.print(speed);
-  Serial.print("  pulse "); Serial.println(pulse);
-}
-
-void processSerialCommand() {
-  if (Serial.available() > 0) {
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    if (!input.length()) return;
-
-    int commaIndex = input.indexOf(',');
-    if (commaIndex == -1) {
-      Serial.println("Error: Expected control,value");
-      return;
-    }
-    int control = input.substring(0, commaIndex).toInt();
-    int value   = input.substring(commaIndex + 1).toInt();
-    Serial.print("Manual: control="); Serial.print(control);
-    Serial.print(" value="); Serial.println(value);
-    processInput((uint8_t)control, (uint8_t)value);
-  }
 }
 
 void setup() {
-  Serial.begin(115200);
-  // while (!Serial) { }  // optional
-
-  // ---------- I2C first ----------
   Wire.begin();
 
-  Serial.println("Scanning I2C...");
-  bool foundAny = false;
-  for (uint8_t addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      Serial.print("  Found I2C device at 0x");
-      Serial.println(addr, HEX);
-      foundAny = true;
-      delay(3);
-    }
-  }
-  if (!foundAny) Serial.println("  (No I2C devices found)");
-
   // ---------- PCA9685 ----------
-  Serial.println("Init PCA9685...");
   pwm.begin();
   pwm.setOscillatorFrequency(27000000); // Adafruit board nominal
   pwm.setPWMFreq(SERVO_FREQ);
   delay(10);
-  Serial.println("PCA9685 initialized");
 
   // ---------- NeoPixel ----------
   pixels.begin();
@@ -376,15 +310,9 @@ void setup() {
     clickCount[i] = 0;
   }
 
-  Serial.println("Setup complete!");
-  Serial.println("Servos stopped. Turn knobs to initialize - first position = midpoint.");
-  Serial.println("Single-click knob = reset midpoint, Double-click = retract");
-  Serial.println("Knob 16 (CC 15) = master control");
 }
 
 void loop() {
-  processSerialCommand();
-
   // MIDI over USB (MIDIUSB)
   midiEventPacket_t rx = MidiUSB.read();
   if (rx.header != 0) {
@@ -413,10 +341,6 @@ void loop() {
   for (uint8_t i = 0; i < NUM_SERVOS; i++) {
     if (isRetracting[i]) {
       if ((now - retractionStartTime[i]) >= RETRACT_TIME_MS) {
-        // Retraction complete, reset midpoint
-        Serial.print("Servo ");
-        Serial.print(i);
-        Serial.println(" retraction complete");
         resetMidpoint(i);
       }
     }
