@@ -174,47 +174,89 @@ def start_led_router(feather_in, twister_out):
 
 # ── capture ───────────────────────────────────────────────────────────────────
 
+def choose_port(ports, keywords, label):
+    """Auto-detect by keyword or show a numbered list to pick from."""
+    idx, name = find_port(ports, keywords)
+    if idx is not None:
+        return idx, name
+    print(f"\n  Could not auto-detect {label}. Available options:")
+    for i, p in enumerate(ports):
+        print(f"    {i}: {p}")
+    idx  = int(input(f"  Pick {label} port number: "))
+    return idx, ports[idx]
+
+
 def capture(filename):
     """
     Smart capture — auto-detects what's connected:
-      Twister + Feather: records Twister, forwards live to Feather for servo
-                         control, routes LED feedback Feather → Twister
-      Feather only:      records directly from Feather (test sketch mode)
+      Twister/WIDI + Feather: records from Twister (or WIDI), forwards live
+                              to Feather for servo control, routes LED
+                              feedback Feather → Twister/WIDI
+      Feather only:           records directly from Feather (test sketch mode)
+
+    WIDI is detected automatically. If a device isn't found by name you'll
+    be shown a numbered list to pick from.
     """
     ins, outs = list_ports()
 
-    twister_in_idx,  twister_in_name  = find_port(ins,  ["twister", "fighter"])
-    twister_out_idx, twister_out_name = find_port(outs, ["twister", "fighter"])
-    feather_in_idx,  feather_in_name  = find_port(ins,  ["feather", "m4", "samd"])
-    feather_out_idx, feather_out_name = find_port(outs, ["feather", "m4", "samd"])
+    # Twister can arrive directly (USB) or via WIDI/CME (wireless)
+    TWISTER_KEYS = ["twister", "fighter", "widi", "cme"]
+    FEATHER_KEYS = ["feather", "m4", "samd"]
 
-    full_pipeline = (twister_in_idx is not None and
-                     feather_out_idx is not None and
-                     feather_in_idx is not None)
+    print("\nDetecting MIDI ports...")
+    print("  Inputs:  " + ", ".join(f"{i}:{p}" for i, p in enumerate(ins)))
+    print("  Outputs: " + ", ".join(f"{i}:{p}" for i, p in enumerate(outs)))
+    print()
 
-    if full_pipeline:
-        print(f"\nTwister + Feather detected — full pipeline:")
-        print(f"  Recording from : {twister_in_name}")
-        print(f"  Forwarding to  : {feather_out_name}  (live servo control)")
-        print(f"  LED routing    : {feather_in_name} → {twister_out_name}")
-        source     = open_in (twister_in_idx)
+    feather_in_idx,  feather_in_name  = find_port(ins,  FEATHER_KEYS)
+    feather_out_idx, feather_out_name = find_port(outs, FEATHER_KEYS)
+    twister_in_idx,  twister_in_name  = find_port(ins,  TWISTER_KEYS)
+    twister_out_idx, twister_out_name = find_port(outs, TWISTER_KEYS)
+
+    feather_present = feather_in_idx is not None and feather_out_idx is not None
+    twister_present = twister_in_idx is not None
+
+    if feather_present and twister_present:
+        # Full pipeline — but confirm or let user override
+        print(f"  Twister/WIDI in : {twister_in_name}")
+        print(f"  Feather out     : {feather_out_name}  (servo control)")
+        print(f"  Feather in      : {feather_in_name}   (LED feedback)")
+        if twister_out_idx is not None:
+            print(f"  Twister/WIDI out: {twister_out_name}  (LED rings)")
+        else:
+            print(f"  Twister/WIDI out: not found — LED rings will not update")
+            twister_out_idx, twister_out_name = choose_port(outs, TWISTER_KEYS,
+                                                             "Twister/WIDI output")
+
+        source      = open_in (twister_in_idx)
         feather_out = open_out(feather_out_idx)
         feather_in  = open_in (feather_in_idx)
         twister_out = open_out(twister_out_idx)
         start_led_router(feather_in, twister_out)
         extra_ports = [feather_out, feather_in, twister_out]
-    else:
-        # Feather only (test sketch mode)
-        if feather_in_idx is None:
-            print("\nAvailable MIDI inputs:")
-            for i, p in enumerate(ins):
-                print(f"  {i}: {p}")
-            feather_in_idx = int(input("Pick input port index: "))
-            feather_in_name = ins[feather_in_idx]
-        print(f"\nFeather only — capturing from: {feather_in_name}")
+
+    elif feather_present:
+        # Feather only — test sketch mode
+        print(f"  No Twister/WIDI found — capturing from Feather only")
+        print(f"  Feather in: {feather_in_name}")
         source      = open_in(feather_in_idx)
         feather_out = None
         extra_ports = []
+
+    else:
+        # Nothing auto-detected — ask for everything
+        print("  Nothing auto-detected. Please select ports manually:")
+        src_idx, src_name = choose_port(ins, [], "recording source (Twister or WIDI)")
+        dst_idx, dst_name = choose_port(outs, [], "Feather output")
+        fb_idx,  fb_name  = choose_port(ins,  [], "Feather input (LED feedback)")
+        led_idx, led_name = choose_port(outs, [], "Twister/WIDI output (LED rings)")
+        print()
+        source      = open_in (src_idx)
+        feather_out = open_out(dst_idx)
+        feather_in  = open_in (fb_idx)
+        twister_out = open_out(led_idx)
+        start_led_router(feather_in, twister_out)
+        extra_ports = [feather_out, feather_in, twister_out]
 
     captured   = []
     start_time = [None]
