@@ -18,16 +18,16 @@ editing. Export back to .mid and play with this script.
 Usage:
     python3 midi_session.py capture [output.mid]
     python3 midi_session.py record [output.mid]
-    python3 midi_session.py play <file.mid> [--loop] [--speed <multiplier>]
+    python3 midi_session.py play <file.mid> [--loop] [--slow <N>] [--speed <multiplier>]
 
 Examples:
     python3 midi_session.py capture test.mid           # Feather only
     python3 midi_session.py record session1.mid        # Twister + Feather
     python3 midi_session.py play session1.mid
     python3 midi_session.py play session1.mid --loop
-    python3 midi_session.py play session1.mid --speed 0.5    # half speed
-    python3 midi_session.py play session1.mid --speed 0.25   # quarter speed
-    python3 midi_session.py play session1.mid --speed 2.0    # double speed
+    python3 midi_session.py play session1.mid --slow 10     # 10x slower
+    python3 midi_session.py play session1.mid --slow 50     # 50x slower
+    python3 midi_session.py play session1.mid --slow 20 --loop
 """
 
 import sys
@@ -290,7 +290,12 @@ def play(filename, loop=False, speed=1.0):
 
     mid    = mido.MidiFile(filename)
     n_msgs = sum(1 for t in mid.tracks for m in t if not m.is_meta)
-    speed_str = f"  [speed {speed}x]" if speed != 1.0 else ""
+    if speed == 1.0:
+        speed_str = ""
+    elif speed < 1.0:
+        speed_str = f"  [{1/speed:.4g}x slower]"
+    else:
+        speed_str = f"  [{speed:.4g}x faster]"
     print(f"Playing {filename}  ({n_msgs} messages){'  [loop]' if loop else ''}{speed_str}")
     print("Ctrl+C to stop.\n")
 
@@ -337,7 +342,9 @@ def main():
             print("Usage: python3 midi_session.py play <file.mid> [--loop] [--speed 0.5]")
             sys.exit(1)
         speed = 1.0
-        if '--speed' in sys.argv:
+        if '--slow' in sys.argv:
+            speed = 1.0 / float(sys.argv[sys.argv.index('--slow') + 1])
+        elif '--speed' in sys.argv:
             speed = float(sys.argv[sys.argv.index('--speed') + 1])
         play(sys.argv[2], loop='--loop' in sys.argv, speed=speed)
 
