@@ -13,25 +13,25 @@
 #define USMAX        600     // max pulse
 
 #define NUM_SERVOS   9       // Number of servos controlled
-#define MASTER_BUTTON 15     // Master button (knob 16 = CC 15)
+#define MASTER_BUTTON 31     // Master button (knob 16 = CC 31)
 #define DEADBAND     4       // ±4 MIDI values around midpoint = ~1 light worth
 #define DOUBLE_CLICK_MS 400  // Max time between clicks for double-click (increased for debounce)
 #define RETRACT_TIME_MS 50000 // 50 seconds for full retraction
 
-// Twister is a 4x4 grid. Servos occupy the top-left 3x3, so every 4th knob
-// (the rightmost column) and the entire bottom row are unmapped.
+// Twister is a 4x4 grid on bank 2 (CC 16-31). Servos occupy the top-left 3x3,
+// so every 4th knob (rightmost column) and the entire bottom row are unmapped.
 //
 // Twister layout → servo index:
-//   knob 1(CC0)→0  knob 2(CC1)→1  knob 3(CC2)→2  knob 4(CC3)→-
-//   knob 5(CC4)→3  knob 6(CC5)→4  knob 7(CC6)→5  knob 8(CC7)→-
-//   knob 9(CC8)→6  knob10(CC9)→7  knob11(CC10)→8 knob12(CC11)→-
-//   knob13(CC12)→- knob14(CC13)→- knob15(CC14)→- knob16(CC15)→master
+//   knob 1(CC16)→0  knob 2(CC17)→1  knob 3(CC18)→2  knob 4(CC19)→-
+//   knob 5(CC20)→3  knob 6(CC21)→4  knob 7(CC22)→5  knob 8(CC23)→-
+//   knob 9(CC24)→6  knob10(CC25)→7  knob11(CC26)→8  knob12(CC27)→-
+//   knob13(CC28)→-  knob14(CC29)→-  knob15(CC30)→-  knob16(CC31)→master
 const uint8_t CC_TO_SERVO[128] = {
-  0,   1,   2,   255,  // CC  0- 3: row 1 (knobs 1-3 active, knob 4 skipped)
-  3,   4,   5,   255,  // CC  4- 7: row 2 (knobs 5-7 active, knob 8 skipped)
-  6,   7,   8,   255,  // CC  8-11: row 3 (knobs 9-11 active, knob 12 skipped)
-  255, 255, 255, 255,  // CC 12-15: row 4 (bottom row — CC 15 = master button)
-  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 16-31
+  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, //  0-15: unused
+  0,   1,   2,   255,  // CC 16-19: row 1 (knobs 1-3 active, knob 4 skipped)
+  3,   4,   5,   255,  // CC 20-23: row 2 (knobs 5-7 active, knob 8 skipped)
+  6,   7,   8,   255,  // CC 24-27: row 3 (knobs 9-11 active, knob 12 skipped)
+  255, 255, 255, 255,  // CC 28-31: row 4 (bottom row — CC 31 = master button)
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 32-47
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 48-63
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, // 64-79
@@ -40,7 +40,7 @@ const uint8_t CC_TO_SERVO[128] = {
   255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255  // 112-127
 };
 
-#define MASTER_BUTTON_CC 15  // Master button uses CC 15 on Channel 2
+#define MASTER_BUTTON_CC 31  // Master button (knob 16 = CC 31 on Channel 2)
 
 // ---------- Globals ----------
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
