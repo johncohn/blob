@@ -153,10 +153,9 @@ void updateKnobLED(uint8_t cc, uint8_t servoIdx) {
   // This may need adjustment based on your Twister's configuration
   uint8_t ledValue = map(abs(deflection), 0, 63, 0, 127);
 
-  // Send MIDI CC back to controller to update LED
+  // Queue LED CC — caller is responsible for flushing
   midiEventPacket_t event = {0x0B, 0xB0, cc, ledValue};
   MidiUSB.sendMIDI(event);
-  MidiUSB.flush();
 }
 
 // Map CC number to servo index using same mapping as CC
@@ -235,11 +234,9 @@ void checkPendingClicks() {
 }
 
 void processInput(uint8_t control, uint8_t midiValue) {
-  // Use mapping table to find servo index
   if (control >= 128) return;
+  Serial.print("CC "); Serial.print(control); Serial.print(" val "); Serial.println(midiValue);
   uint8_t servoIdx = CC_TO_SERVO[control];
-
-  // Ignore if not a mapped knob
   if (servoIdx == 255 || servoIdx >= NUM_SERVOS) return;
 
   // Store current knob value
@@ -421,5 +418,6 @@ void loop() {
     }
   }
 
+  MidiUSB.flush();  // send all queued LED feedback in one shot
   delay(1);
 }
