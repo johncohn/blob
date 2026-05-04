@@ -172,22 +172,49 @@ def start_led_router(feather_in, twister_out):
     feather_in.set_callback(on_led)
 
 
-# ── capture (single device, no routing) ──────────────────────────────────────
+# ── capture ───────────────────────────────────────────────────────────────────
 
 def capture(filename):
-    """Record from any single MIDI device — no Twister or routing needed."""
-    ins, _ = list_ports()
+    """
+    Smart capture — auto-detects what's connected:
+      Twister + Feather: records Twister, forwards live to Feather for servo
+                         control, routes LED feedback Feather → Twister
+      Feather only:      records directly from Feather (test sketch mode)
+    """
+    ins, outs = list_ports()
 
-    print("\nAvailable MIDI inputs:")
-    for i, p in enumerate(ins):
-        print(f"  {i}: {p}")
-    idx, name = find_port(ins, ["feather", "m4", "samd", "twister", "fighter"])
-    if idx is None:
-        idx  = int(input("\nPick input port index: "))
-        name = ins[idx]
-    print(f"\nCapturing from: {name}")
+    twister_in_idx,  twister_in_name  = find_port(ins,  ["twister", "fighter"])
+    twister_out_idx, twister_out_name = find_port(outs, ["twister", "fighter"])
+    feather_in_idx,  feather_in_name  = find_port(ins,  ["feather", "m4", "samd"])
+    feather_out_idx, feather_out_name = find_port(outs, ["feather", "m4", "samd"])
 
-    source = open_in(idx)
+    full_pipeline = (twister_in_idx is not None and
+                     feather_out_idx is not None and
+                     feather_in_idx is not None)
+
+    if full_pipeline:
+        print(f"\nTwister + Feather detected — full pipeline:")
+        print(f"  Recording from : {twister_in_name}")
+        print(f"  Forwarding to  : {feather_out_name}  (live servo control)")
+        print(f"  LED routing    : {feather_in_name} → {twister_out_name}")
+        source     = open_in (twister_in_idx)
+        feather_out = open_out(feather_out_idx)
+        feather_in  = open_in (feather_in_idx)
+        twister_out = open_out(twister_out_idx)
+        start_led_router(feather_in, twister_out)
+        extra_ports = [feather_out, feather_in, twister_out]
+    else:
+        # Feather only (test sketch mode)
+        if feather_in_idx is None:
+            print("\nAvailable MIDI inputs:")
+            for i, p in enumerate(ins):
+                print(f"  {i}: {p}")
+            feather_in_idx = int(input("Pick input port index: "))
+            feather_in_name = ins[feather_in_idx]
+        print(f"\nFeather only — capturing from: {feather_in_name}")
+        source      = open_in(feather_in_idx)
+        feather_out = None
+        extra_ports = []
 
     captured   = []
     start_time = [None]
@@ -201,12 +228,14 @@ def capture(filename):
         elapsed = now - start_time[0]
         with lock:
             captured.append((elapsed, list(msg)))
+        if feather_out:
+            feather_out.send_message(msg)
         if (msg[0] & 0xF0) == 0xB0:
             print(f"  [CAP ] Ch{(msg[0] & 0x0F) + 1}  CC{msg[1]:3d} = {msg[2]:3d}")
 
     source.set_callback(on_msg)
 
-    print(f"Recording to {filename}")
+    print(f"\nRecording to {filename}")
     print("Ctrl+C to stop and save.\n")
 
     try:
@@ -217,7 +246,7 @@ def capture(filename):
 
     with lock:
         save_midi(filename, captured)
-    source.close_port()
+    close_all(source, *extra_ports)
 
 
 # ── record ────────────────────────────────────────────────────────────────────
