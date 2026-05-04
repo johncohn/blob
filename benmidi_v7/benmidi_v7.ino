@@ -42,6 +42,10 @@ const uint8_t CC_TO_SERVO[128] = {
 
 #define MASTER_BUTTON_CC 31  // Master button (knob 16 = CC 31 on Channel 2)
 
+// PCA9685 channels skip every 4th (3,7,11 unused), mirroring the Twister layout.
+// Servo index 0-8 → PCA9685 channel 0,1,2,4,5,6,8,9,10
+const uint8_t SERVO_TO_CHANNEL[9] = {0, 1, 2, 4, 5, 6, 8, 9, 10};
+
 // ---------- Globals ----------
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUM_PIXELS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PCA9685_ADDR);
@@ -116,7 +120,7 @@ void resetMidpoint(uint8_t servoIdx) {
   isRetracting[servoIdx] = false;
 
   // Stop servo
-  writeServoUS(servoIdx, 1500);
+  writeServoUS(SERVO_TO_CHANNEL[servoIdx], 1500);
 
   Serial.print("Servo ");
   Serial.print(servoIdx);
@@ -133,7 +137,7 @@ void startRetraction(uint8_t servoIdx) {
 
   // Full speed retraction (counterclockwise = lower pulse)
   // USMAX = 600 (minimum pulse) = retract direction
-  writeServoUS(servoIdx, USMAX); // Full speed retract
+  writeServoUS(SERVO_TO_CHANNEL[servoIdx], USMAX); // Full speed retract
 
   Serial.print("Servo ");
   Serial.print(servoIdx);
@@ -261,7 +265,7 @@ void processInput(uint8_t control, uint8_t midiValue) {
   // Calculate speed based on position relative to midpoint
   int16_t speed = calculateServoSpeed(servoIdx, midiValue);
   uint16_t pulse = speedToPulse(speed);
-  writeServoUS(servoIdx, pulse);
+  writeServoUS(SERVO_TO_CHANNEL[servoIdx], pulse);
 
   // Update LED feedback to show deflection from midpoint
   updateKnobLED(control, servoIdx);
@@ -362,7 +366,7 @@ void setup() {
     knobInitialized[i] = false;
     isRetracting[i] = false;
     retractionStartTime[i] = 0;
-    writeServoUS(i, 1500);            // Stop all servos at startup
+    writeServoUS(SERVO_TO_CHANNEL[i], 1500);  // Stop all servos at startup
   }
 
   // Initialize button state
