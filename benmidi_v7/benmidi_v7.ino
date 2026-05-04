@@ -245,29 +245,11 @@ void processInput(uint8_t control, uint8_t midiValue) {
   // Store current knob value
   currentKnobValue[servoIdx] = midiValue;
 
-  // First time receiving this knob value - initialize midpoint
+  // Mark servo as active on first message (midpoint stays at 64 from setup)
   if (!knobInitialized[servoIdx]) {
-    servoMidpoint[servoIdx] = midiValue;
     knobInitialized[servoIdx] = true;
-    writeServoUS(servoIdx, 1500); // Stop servo
-
-    Serial.print("Servo ");
-    Serial.print(servoIdx);
-    Serial.print(" initialized at midpoint ");
-    Serial.println(midiValue);
-
-    // Update LED to show we're at midpoint
-    updateKnobLED(control, servoIdx);
-
-    // NeoPixel feedback - simple brightness like v5 for debugging
-    uint32_t color = knobColors[servoIdx];
-    uint8_t brightness = midiValue * 2;
-    if (brightness > 255) brightness = 255;
-    pixels.setBrightness(brightness);
-    pixels.setPixelColor(0, color);
-    pixels.show();
-
-    return;
+    Serial.print("Servo "); Serial.print(servoIdx + 1);
+    Serial.print(" active, midpoint="); Serial.println(servoMidpoint[servoIdx]);
   }
 
   // If retracting, cancel retraction and set new midpoint
@@ -296,13 +278,13 @@ void processInput(uint8_t control, uint8_t midiValue) {
   pixels.show();
 
   // debug
-  Serial.print("CC "); Serial.print(control);
-  Serial.print(" (knob "); Serial.print(control + 1); Serial.print(")");
+  Serial.print("knob "); Serial.print(control - 15);
+  Serial.print("  CC "); Serial.print(control);
   Serial.print("  val "); Serial.print(midiValue);
-  Serial.print("  → servo "); Serial.print(servoIdx);
-  Serial.print("  midpoint "); Serial.print(servoMidpoint[servoIdx]);
-  Serial.print("  speed "); Serial.print(speed);
-  Serial.print("  pulse(us) "); Serial.println(pulse);
+  Serial.print("  → servo "); Serial.print(servoIdx + 1);
+  Serial.print("  mid "); Serial.print(servoMidpoint[servoIdx]);
+  Serial.print("  spd "); Serial.print(speed);
+  Serial.print("  pulse "); Serial.println(pulse);
 }
 
 void processSerialCommand() {
@@ -378,9 +360,9 @@ void setup() {
 
   // Initialize servo control variables
   for (uint8_t i = 0; i < NUM_SERVOS; i++) {
-    servoMidpoint[i] = 0;             // Will be set on first knob movement
-    currentKnobValue[i] = 0;
-    knobInitialized[i] = false;       // Wait for actual knob position
+    servoMidpoint[i] = 64;            // MIDI center — CW from here = extend, CCW = retract
+    currentKnobValue[i] = 64;
+    knobInitialized[i] = false;
     isRetracting[i] = false;
     retractionStartTime[i] = 0;
     writeServoUS(i, 1500);            // Stop all servos at startup
