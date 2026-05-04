@@ -18,13 +18,16 @@ editing. Export back to .mid and play with this script.
 Usage:
     python3 midi_session.py capture [output.mid]
     python3 midi_session.py record [output.mid]
-    python3 midi_session.py play <file.mid> [--loop]
+    python3 midi_session.py play <file.mid> [--loop] [--speed <multiplier>]
 
 Examples:
-    python3 midi_session.py capture test.mid        # Feather only
-    python3 midi_session.py record session1.mid     # Twister + Feather
+    python3 midi_session.py capture test.mid           # Feather only
+    python3 midi_session.py record session1.mid        # Twister + Feather
     python3 midi_session.py play session1.mid
     python3 midi_session.py play session1.mid --loop
+    python3 midi_session.py play session1.mid --speed 0.5    # half speed
+    python3 midi_session.py play session1.mid --speed 0.25   # quarter speed
+    python3 midi_session.py play session1.mid --speed 2.0    # double speed
 """
 
 import sys
@@ -270,7 +273,7 @@ def record(filename):
 
 # ── play ──────────────────────────────────────────────────────────────────────
 
-def play(filename, loop=False):
+def play(filename, loop=False, speed=1.0):
     ins, outs = list_ports()
 
     print("\nDetecting MIDI ports...")
@@ -287,14 +290,17 @@ def play(filename, loop=False):
 
     mid    = mido.MidiFile(filename)
     n_msgs = sum(1 for t in mid.tracks for m in t if not m.is_meta)
-    print(f"Playing {filename}  ({n_msgs} messages){'  [loop]' if loop else ''}")
+    speed_str = f"  [speed {speed}x]" if speed != 1.0 else ""
+    print(f"Playing {filename}  ({n_msgs} messages){'  [loop]' if loop else ''}{speed_str}")
     print("Ctrl+C to stop.\n")
 
     try:
         while True:
-            for msg in mid.play():
+            for msg in mid:          # iterate manually so we can scale timing
                 if msg.is_meta:
                     continue
+                if msg.time > 0:
+                    time.sleep(msg.time / speed)
                 raw = msg.bytes()
                 feather_out.send_message(raw)
                 if (raw[0] & 0xF0) == 0xB0:
@@ -328,9 +334,12 @@ def main():
 
     elif cmd == 'play':
         if len(sys.argv) < 3:
-            print("Usage: python3 midi_session.py play <file.mid> [--loop]")
+            print("Usage: python3 midi_session.py play <file.mid> [--loop] [--speed 0.5]")
             sys.exit(1)
-        play(sys.argv[2], loop='--loop' in sys.argv)
+        speed = 1.0
+        if '--speed' in sys.argv:
+            speed = float(sys.argv[sys.argv.index('--speed') + 1])
+        play(sys.argv[2], loop='--loop' in sys.argv, speed=speed)
 
 
 if __name__ == '__main__':
