@@ -371,13 +371,14 @@ def play(filename, loop=False, speed=1.0):
     print()
 
     feather_out = open_out(feather_out_idx)
-    feather_in  = open_in (feather_in_idx)
 
     if twister_out_idx is not None:
         twister_out = open_out(twister_out_idx)
+        feather_in  = open_in(feather_in_idx)
         start_led_router(feather_in, twister_out)
     else:
         twister_out = None
+        feather_in  = None
 
     mid    = mido.MidiFile(filename)
     n_msgs = sum(1 for t in mid.tracks for m in t if not m.is_meta)
