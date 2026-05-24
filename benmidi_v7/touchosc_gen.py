@@ -278,6 +278,7 @@ def _xy_script(direction):
     """
     header = (
         'local lastDownTime = -9999\n'
+        'local touchDownTime = -9999\n'
         'local doCenter = false\n'
         'local upd = false\n'
         'local skip = 0\n'
@@ -286,6 +287,7 @@ def _xy_script(direction):
         '    local t = os.clock()\n'
         '    if self.values.touch then\n'
         '      skip = 0\n'
+        '      touchDownTime = t\n'
         '      if 1.0 > (t - lastDownTime) then\n'
         '        doCenter = true\n'
         '      else\n'
@@ -293,20 +295,22 @@ def _xy_script(direction):
         '      end\n'
         '      lastDownTime = t\n'
         '    else\n'
-        '      if doCenter then\n'
+        '      local held = t - touchDownTime\n'
+        '      if doCenter and 0.3 > held then\n'
         '        doCenter = false\n'
         '        skip = 2\n'
         '        upd = true\n'
         '        self.values.x = 0.5\n'
         '        self.values.y = 0.5\n'
         '        upd = false\n'
+        '      else\n'
+        '        doCenter = false\n'
         '      end\n'
         '    end\n'
     )
     if direction in ('N', 'S', 'CTR'):
         body = (
             '  elseif key == "x" and not upd then\n'
-            '    doCenter = false\n'
             '    upd = true\n'
             '    self.values.x = 0.5\n'
             '    upd = false\n'
@@ -314,7 +318,6 @@ def _xy_script(direction):
     elif direction in ('E', 'W'):
         body = (
             '  elseif key == "y" and not upd then\n'
-            '    doCenter = false\n'
             '    upd = true\n'
             '    self.values.y = 0.5\n'
             '    upd = false\n'
@@ -322,7 +325,6 @@ def _xy_script(direction):
     elif direction in ('NW', 'SE'):
         body = (
             '  elseif (key == "x" or key == "y") and not upd then\n'
-            '    doCenter = false\n'
             '    if skip > 0 then skip = skip - 1\n'
             '    else\n'
             '      upd = true\n'
@@ -335,7 +337,6 @@ def _xy_script(direction):
     else:  # NE, SW
         body = (
             '  elseif (key == "x" or key == "y") and not upd then\n'
-            '    doCenter = false\n'
             '    if skip > 0 then skip = skip - 1\n'
             '    else\n'
             '      upd = true\n'
