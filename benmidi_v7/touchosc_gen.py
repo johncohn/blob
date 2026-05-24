@@ -277,21 +277,28 @@ def _xy_script(direction):
     NOTE: comparisons use '>' to avoid '<' → '&lt;' XML encoding.
     """
     header = (
-        'local lastTapTime = 0\n'
+        'local lastDownTime = -9999\n'
+        'local doCenter = false\n'
         'local upd = false\n'
+        'local skip = 0\n'
         'function onValueChanged(key)\n'
         '  if key == "touch" then\n'
+        '    local t = os.clock()\n'
         '    if self.values.touch then\n'
-        '      local t = os.clock()\n'
-        '      local dt = t - lastTapTime\n'
-        '      if 0.50 > dt then\n'
+        '      if 1.0 > (t - lastDownTime) then\n'
+        '        doCenter = true\n'
+        '      else\n'
+        '        doCenter = false\n'
+        '      end\n'
+        '      lastDownTime = t\n'
+        '    else\n'
+        '      if doCenter then\n'
+        '        doCenter = false\n'
+        '        skip = 2\n'
         '        upd = true\n'
         '        self.values.x = 0.5\n'
         '        self.values.y = 0.5\n'
         '        upd = false\n'
-        '        lastTapTime = 0\n'
-        '      else\n'
-        '        lastTapTime = t\n'
         '      end\n'
         '    end\n'
     )
@@ -312,20 +319,26 @@ def _xy_script(direction):
     elif direction in ('NW', 'SE'):
         body = (
             '  elseif (key == "x" or key == "y") and not upd then\n'
-            '    upd = true\n'
-            '    local t = (self.values.x - self.values.y) * 0.5\n'
-            '    self.values.x = 0.5 + t\n'
-            '    self.values.y = 0.5 - t\n'
-            '    upd = false\n'
+            '    if skip > 0 then skip = skip - 1\n'
+            '    else\n'
+            '      upd = true\n'
+            '      local t = (self.values.x - self.values.y) * 0.5\n'
+            '      self.values.x = 0.5 + t\n'
+            '      self.values.y = 0.5 - t\n'
+            '      upd = false\n'
+            '    end\n'
         )
     else:  # NE, SW
         body = (
             '  elseif (key == "x" or key == "y") and not upd then\n'
-            '    upd = true\n'
-            '    local t = (self.values.x + self.values.y - 1.0) * 0.5\n'
-            '    self.values.x = 0.5 + t\n'
-            '    self.values.y = 0.5 + t\n'
-            '    upd = false\n'
+            '    if skip > 0 then skip = skip - 1\n'
+            '    else\n'
+            '      upd = true\n'
+            '      local t = (self.values.x + self.values.y - 1.0) * 0.5\n'
+            '      self.values.x = 0.5 + t\n'
+            '      self.values.y = 0.5 + t\n'
+            '      upd = false\n'
+            '    end\n'
         )
     return header + body + '  end\nend'
 
@@ -849,20 +862,20 @@ def build_compass_layout():
     )
 
     r1 = CTL_Y + 4
-    button(cv, 'capture', LX,        r1, BW, BH1, CC_RECORD,
-           toggle=True, rgb=(0.85, 0.45, 0.10), script=capture_script)
-    label(cv,  'lbl_capture', LX,    r1+BH1+2, BW, LBLH, 'CAPTURE', size=11, align=2)
-    button(cv, 'loop', LX+BW+BG,     r1, BW, BH1, CC_LOOP,
-           toggle=True, rgb=(0.10, 0.65, 0.70), script=loop_script)
-    label(cv,  'lbl_loop', LX+BW+BG, r1+BH1+2, BW, LBLH, 'LOOP', size=11, align=2)
+    button(cv, 'halt',    LX,          r1, BW, BH1, CC_HALT,
+           rgb=(0.90, 0.10, 0.10), script=halt_script)
+    label(cv,  'lbl_halt', LX,         r1+BH1+2, BW, LBLH, 'HALT ALL', size=11, align=2)
+    button(cv, 'retract', LX+BW+BG,    r1, BW, BH1, CC_RETRACT,
+           rgb=(0.90, 0.50, 0.10), script=retract_script)
+    label(cv,  'lbl_retract', LX+BW+BG, r1+BH1+2, BW, LBLH, 'RETRACT ALL', size=11, align=2)
 
     r2 = r1 + BH1 + LBLH + RG
-    button(cv, 'halt',    LX,          r2, BW, BH1, CC_HALT,
-           rgb=(0.90, 0.10, 0.10), script=halt_script)
-    label(cv,  'lbl_halt', LX,         r2+BH1+2, BW, LBLH, 'HALT ALL', size=11, align=2)
-    button(cv, 'retract', LX+BW+BG,    r2, BW, BH1, CC_RETRACT,
-           rgb=(0.90, 0.50, 0.10), script=retract_script)
-    label(cv,  'lbl_retract', LX+BW+BG, r2+BH1+2, BW, LBLH, 'RETRACT ALL', size=11, align=2)
+    button(cv, 'capture', LX,        r2, BW, BH1, CC_RECORD,
+           toggle=True, rgb=(0.85, 0.45, 0.10), script=capture_script)
+    label(cv,  'lbl_capture', LX,    r2+BH1+2, BW, LBLH, 'CAPTURE', size=11, align=2)
+    button(cv, 'loop', LX+BW+BG,     r2, BW, BH1, CC_LOOP,
+           toggle=True, rgb=(0.10, 0.65, 0.70), script=loop_script)
+    label(cv,  'lbl_loop', LX+BW+BG, r2+BH1+2, BW, LBLH, 'LOOP', size=11, align=2)
 
     RBW = 76     # record/play button width
     TXX = LX + RBW + 8
