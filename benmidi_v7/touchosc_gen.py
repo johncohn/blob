@@ -285,6 +285,7 @@ def _xy_script(direction):
         '  if key == "touch" then\n'
         '    local t = os.clock()\n'
         '    if self.values.touch then\n'
+        '      skip = 0\n'
         '      if 1.0 > (t - lastDownTime) then\n'
         '        doCenter = true\n'
         '      else\n'
@@ -305,6 +306,7 @@ def _xy_script(direction):
     if direction in ('N', 'S', 'CTR'):
         body = (
             '  elseif key == "x" and not upd then\n'
+            '    doCenter = false\n'
             '    upd = true\n'
             '    self.values.x = 0.5\n'
             '    upd = false\n'
@@ -312,6 +314,7 @@ def _xy_script(direction):
     elif direction in ('E', 'W'):
         body = (
             '  elseif key == "y" and not upd then\n'
+            '    doCenter = false\n'
             '    upd = true\n'
             '    self.values.y = 0.5\n'
             '    upd = false\n'
@@ -319,6 +322,7 @@ def _xy_script(direction):
     elif direction in ('NW', 'SE'):
         body = (
             '  elseif (key == "x" or key == "y") and not upd then\n'
+            '    doCenter = false\n'
             '    if skip > 0 then skip = skip - 1\n'
             '    else\n'
             '      upd = true\n'
@@ -331,6 +335,7 @@ def _xy_script(direction):
     else:  # NE, SW
         body = (
             '  elseif (key == "x" or key == "y") and not upd then\n'
+            '    doCenter = false\n'
             '    if skip > 0 then skip = skip - 1\n'
             '    else\n'
             '      upd = true\n'
