@@ -298,6 +298,7 @@ def _xy_script(direction):
         '      local held = t - touchDownTime\n'
         '      if doCenter and 0.3 > held then\n'
         '        doCenter = false\n'
+        '        lastDownTime = -9999\n'
         '        skip = 2\n'
         '        upd = true\n'
         '        self.values.x = 0.5\n'
