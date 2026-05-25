@@ -276,6 +276,7 @@ def _xy_script(direction):
     NOTE: comparisons use '>' to avoid '<' → '&lt;' XML encoding.
     """
     header = (
+        'local tapPhase = 0\n'
         'local tap1Time = -9999\n'
         'local tap1X = 0.5\n'
         'local tap1Y = 0.5\n'
@@ -290,35 +291,41 @@ def _xy_script(direction):
         '      local ax = self.values.x - 0.5\n'
         '      local ay = self.values.y - 0.5\n'
         '      if 0.0025 > ax*ax + ay*ay then\n'
-        '        tap1Time = -9999\n'
+        '        tapPhase = 0\n'
         '        doCenter = false\n'
-        '      elseif tap1Time > 0 then\n'
+        '      elseif tapPhase == 2 then\n'
         '        local dt = t - tap1Time\n'
         '        local dx = self.values.x - tap1X\n'
         '        local dy = self.values.y - tap1Y\n'
-        '        if 0.3 > dt and 0.0025 > dx*dx + dy*dy then\n'
+        '        if 0.5 > dt and 0.0025 > dx*dx + dy*dy then\n'
         '          doCenter = true\n'
-        '          tap1Time = -9999\n'
+        '          tapPhase = 3\n'
         '        else\n'
         '          tap1Time = t\n'
-        '          tap1X = self.values.x\n'
-        '          tap1Y = self.values.y\n'
+        '          tapPhase = 1\n'
         '          doCenter = false\n'
         '        end\n'
         '      else\n'
         '        tap1Time = t\n'
-        '        tap1X = self.values.x\n'
-        '        tap1Y = self.values.y\n'
+        '        tapPhase = 1\n'
         '        doCenter = false\n'
         '      end\n'
         '    else\n'
-        '      if doCenter then\n'
+        '      if tapPhase == 1 then\n'
+        '        tap1X = self.values.x\n'
+        '        tap1Y = self.values.y\n'
+        '        tapPhase = 2\n'
+        '      elseif tapPhase == 3 and doCenter then\n'
         '        doCenter = false\n'
+        '        tapPhase = 0\n'
         '        skip = 2\n'
         '        upd = true\n'
         '        self.values.x = 0.5\n'
         '        self.values.y = 0.5\n'
         '        upd = false\n'
+        '      else\n'
+        '        tapPhase = 0\n'
+        '        doCenter = false\n'
         '      end\n'
         '    end\n'
     )
@@ -855,7 +862,15 @@ def build_compass_layout():
     label(cv,  'lbl_play', LX, r4+BH2+2, RBW, LBLH, 'PLAY', size=10, align=2)
     text_input(cv, 'play_filename', TXX, r4, TXW, BH2, '/blob/play/filename')
 
-    # ── right column: blower, shutoff, heartbeat ──────────────────────────────
+    r5 = r4 + BH2 + LBLH + RG
+    HFW = (LW - BG) // 2
+    label(cv, 'hdr_heart_l', LX, r5, LW, 14, 'HEARTBEAT', size=11, align=1)
+    fader(cv, 'hb_speed',  LX,       r5+16, HFW, 50, CC_HB_SPEED,  default=0.0, rgb=(0.90, 0.22, 0.30))
+    fader(cv, 'hb_bright', LX+HFW+BG, r5+16, HFW, 50, CC_HB_BRIGHT, default=0.0, rgb=(0.90, 0.45, 0.15))
+    label(cv, 'lbl_hb_spd', LX,        r5+68, HFW, 12, 'HB SPEED',  size=10, align=2)
+    label(cv, 'lbl_hb_bri', LX+HFW+BG, r5+68, HFW, 12, 'HB BRIGHT', size=10, align=2)
+
+    # ── right column: blower, shutoff ─────────────────────────────────────────
     RX  = 391
     RW  = C_W - RX - 4   # 373 px  (391 .. 764)
     FW3 = (RW - 12) // 3  # 3-fader width = 120 px each, 6 px gaps
@@ -898,15 +913,6 @@ def build_compass_layout():
     label(cv, 'lbl_shutoff', RX, ry, RW, 14, 'AIR SHUTOFF', size=11, align=2)
     ry += 16
     fader(cv, 'shutoff', RX, ry, RW, 28, CC_SHUTOFF, default=0.0, rgb=(0.70, 0.15, 0.70))
-    ry += 38
-
-    label(cv, 'hdr_heart', RX, ry, RW, 14, 'HEARTBEAT', size=11, align=1)
-    ry += 16
-    HFW = (RW - 8) // 2   # 182 px each
-    fader(cv, 'hb_speed',  RX,       ry, HFW, 50, CC_HB_SPEED,  default=0.0, rgb=(0.90, 0.22, 0.30))
-    fader(cv, 'hb_bright', RX+HFW+8, ry, HFW, 50, CC_HB_BRIGHT, default=0.0, rgb=(0.90, 0.45, 0.15))
-    label(cv, 'lbl_hb_spd', RX,       ry+52, HFW, 12, 'HB SPEED',  size=10, align=2)
-    label(cv, 'lbl_hb_bri', RX+HFW+8, ry+52, HFW, 12, 'HB BRIGHT', size=10, align=2)
 
     return root
 
