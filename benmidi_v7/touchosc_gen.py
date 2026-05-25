@@ -63,7 +63,6 @@ CC_RECORD         = 39
 CC_PLAY           = 40
 CC_BLOWER_LOW     = 41
 CC_BREATHING_RATE = 42
-CC_LOOP           = 43   # loop-playback toggle → blob_monitor loop mode
 
 
 # ── layout constants ──────────────────────────────────────────────────────────
@@ -798,56 +797,6 @@ def build_compass_layout():
     LBLH = 13         # label height
     RG   = 8          # row gap
 
-    capture_script = (
-        'function onValueChanged(key)\n'
-        '  if key ~= "x" then return end\n'
-        '  if self.values.x > 0 then\n'
-        '    _brec = {}\n'
-        '    if _brec_timer then _brec_timer:stop() end\n'
-        '    _brec_timer = Timer.new(0.05, function()\n'
-        '      local yax = {[1]=true,[4]=true,[7]=true}\n'
-        '      local snap = {}\n'
-        '      for i = 0, 8 do\n'
-        '        local s = root:findByName("servo"..i, true)\n'
-        '        snap[i] = s and (yax[i] and s.values.y or s.values.x) or 0.5\n'
-        '      end\n'
-        '      table.insert(_brec, snap)\n'
-        '    end)\n'
-        '    _brec_timer:start()\n'
-        '  else\n'
-        '    if _brec_timer then _brec_timer:stop() end\n'
-        '    _brec_timer = nil\n'
-        '  end\n'
-        'end'
-    )
-    loop_script = (
-        'function onValueChanged(key)\n'
-        '  if key ~= "x" then return end\n'
-        '  if self.values.x > 0 then\n'
-        '    if not _brec or #_brec == 0 then return end\n'
-        '    _bplay_idx = 1\n'
-        '    if _bplay_timer then _bplay_timer:stop() end\n'
-        '    _bplay_timer = Timer.new(0.05, function()\n'
-        '      local snap = _brec[_bplay_idx]\n'
-        '      if not snap then _bplay_idx = 1; return end\n'
-        '      local yax = {[1]=true,[4]=true,[7]=true}\n'
-        '      for i = 0, 8 do\n'
-        '        local s = root:findByName("servo"..i, true)\n'
-        '        if s and snap[i] ~= nil then\n'
-        '          if yax[i] then s.values.y = snap[i]\n'
-        '          else s.values.x = snap[i] end\n'
-        '        end\n'
-        '      end\n'
-        '      _bplay_idx = _bplay_idx + 1\n'
-        '      if _bplay_idx > #_brec then _bplay_idx = 1 end\n'
-        '    end)\n'
-        '    _bplay_timer:start()\n'
-        '  else\n'
-        '    if _bplay_timer then _bplay_timer:stop() end\n'
-        '    _bplay_timer = nil\n'
-        '  end\n'
-        'end'
-    )
     halt_script = (
         'function onValueChanged(key)\n'
         '  if key == "x" and self.values.x > 0 then\n'
@@ -890,19 +839,11 @@ def build_compass_layout():
            rgb=(0.90, 0.50, 0.10), script=retract_script)
     label(cv,  'lbl_retract', LX+BW+BG, r1+BH1+2, BW, LBLH, 'RETRACT ALL', size=11, align=2)
 
-    r2 = r1 + BH1 + LBLH + RG
-    button(cv, 'capture', LX,        r2, BW, BH1, CC_RECORD,
-           toggle=True, rgb=(0.85, 0.45, 0.10), script=capture_script)
-    label(cv,  'lbl_capture', LX,    r2+BH1+2, BW, LBLH, 'CAPTURE', size=11, align=2)
-    button(cv, 'loop', LX+BW+BG,     r2, BW, BH1, CC_LOOP,
-           toggle=True, rgb=(0.10, 0.65, 0.70), script=loop_script)
-    label(cv,  'lbl_loop', LX+BW+BG, r2+BH1+2, BW, LBLH, 'LOOP', size=11, align=2)
-
     RBW = 76     # record/play button width
     TXX = LX + RBW + 8
     TXW = LW - RBW - 8
 
-    r3 = r2 + BH1 + LBLH + RG
+    r3 = r1 + BH1 + LBLH + RG
     button(cv, 'record', LX, r3, RBW, BH2, CC_RECORD,
            toggle=True, rgb=(0.80, 0.10, 0.10))
     label(cv,  'lbl_record', LX, r3+BH2+2, RBW, LBLH, 'RECORD', size=10, align=2)
