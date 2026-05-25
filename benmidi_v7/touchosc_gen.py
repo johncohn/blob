@@ -788,22 +788,35 @@ def build_compass_layout():
               f'{idx+1} {direction}', size=11, align=2)
 
     # ── controls strip (y=722 … 1024) ─────────────────────────────────────────
-    # Left column (x=4..381): CAPTURE/LOOP, HALT/RETRACT, RECORD/PLAY
-    # Right column (x=391..764): BLOWER, AIR SHUTOFF, HEARTBEAT
-    # Vertical divider at x=385.
+    # Left  (x=4..381):   HALT/RETRACT · HEARTBEAT · RECORD+filename
+    # Right (x=391..764): BREATHE+SHUTOFF · BLOWER faders · PLAY+filename
+    # Both columns share y0=726, y_rec=960, GAP=44 between sections.
     CTL_Y = 722
     box(cv, 'col_div', 385, CTL_Y, 2, C_H - CTL_Y, rgb=(0.22, 0.22, 0.22))
 
-    # ── left column ───────────────────────────────────────────────────────────
     LX   = 4
-    LW   = 377        # x: 4 .. 381
-    BW   = (LW - 12) // 2   # paired button half-width = 182 px
-    BG   = 12         # gap between paired buttons
-    BH1  = 50         # CAPTURE/LOOP / HALT/RETRACT height
-    BH2  = 38         # RECORD/PLAY height
-    LBLH = 13         # label height
-    RG   = 8          # row gap
+    LW   = 377
+    BW   = (LW - 12) // 2   # 182 px
+    BG   = 12
+    BH1  = 50
+    BH2  = 40
+    LBLH = 13
+    GAP  = 44
+    RX   = 391
+    RW   = C_W - RX - 4     # 373 px
+    RW2  = (RW - 8) // 2    # 182 px  (BREATHE / SHUTOFF half-widths)
+    FW3  = (RW - 12) // 3   # 120 px  (3 blower faders)
+    HFW  = BW                # heartbeat fader width = 182 px
+    HB_H = 53                # heartbeat fader height
+    BL_H = 74                # blower fader height
+    GREY = (0.25, 0.35, 0.30)
 
+    # Both columns: top of content
+    y0    = CTL_Y + 4        # 726
+    # Both columns: RECORD / PLAY button top  (40 px btn + 2 + 13 lbl = 55 → ends 1015)
+    y_rec = 960
+
+    # ── scripts ───────────────────────────────────────────────────────────────
     halt_script = (
         'function onValueChanged(key)\n'
         '  if key == "x" and self.values.x > 0 then\n'
@@ -837,45 +850,6 @@ def build_compass_layout():
         '  end\n'
         'end'
     )
-
-    r1 = CTL_Y + 4
-    button(cv, 'halt',    LX,          r1, BW, BH1, CC_HALT,
-           rgb=(0.90, 0.10, 0.10), script=halt_script)
-    label(cv,  'lbl_halt', LX,         r1+BH1+2, BW, LBLH, 'HALT ALL', size=11, align=2)
-    button(cv, 'retract', LX+BW+BG,    r1, BW, BH1, CC_RETRACT,
-           rgb=(0.90, 0.50, 0.10), script=retract_script)
-    label(cv,  'lbl_retract', LX+BW+BG, r1+BH1+2, BW, LBLH, 'RETRACT ALL', size=11, align=2)
-
-    RBW = 76     # record/play button width
-    TXX = LX + RBW + 8
-    TXW = LW - RBW - 8
-
-    r3 = r1 + BH1 + LBLH + RG
-    button(cv, 'record', LX, r3, RBW, BH2, CC_RECORD,
-           toggle=True, rgb=(0.80, 0.10, 0.10))
-    label(cv,  'lbl_record', LX, r3+BH2+2, RBW, LBLH, 'RECORD', size=10, align=2)
-    text_input(cv, 'rec_filename', TXX, r3, TXW, BH2, '/blob/record/filename')
-
-    r4 = r3 + BH2 + LBLH + RG
-    button(cv, 'play', LX, r4, RBW, BH2, CC_PLAY,
-           toggle=True, rgb=(0.10, 0.70, 0.20))
-    label(cv,  'lbl_play', LX, r4+BH2+2, RBW, LBLH, 'PLAY', size=10, align=2)
-    text_input(cv, 'play_filename', TXX, r4, TXW, BH2, '/blob/play/filename')
-
-    r5 = r4 + BH2 + LBLH + RG
-    HFW = (LW - BG) // 2
-    label(cv, 'hdr_heart_l', LX, r5, LW, 14, 'HEARTBEAT', size=11, align=1)
-    fader(cv, 'hb_speed',  LX,       r5+16, HFW, 50, CC_HB_SPEED,  default=0.0, rgb=(0.90, 0.22, 0.30))
-    fader(cv, 'hb_bright', LX+HFW+BG, r5+16, HFW, 50, CC_HB_BRIGHT, default=0.0, rgb=(0.90, 0.45, 0.15))
-    label(cv, 'lbl_hb_spd', LX,        r5+68, HFW, 12, 'HB SPEED',  size=10, align=2)
-    label(cv, 'lbl_hb_bri', LX+HFW+BG, r5+68, HFW, 12, 'HB BRIGHT', size=10, align=2)
-
-    # ── right column: blower, shutoff ─────────────────────────────────────────
-    RX  = 391
-    RW  = C_W - RX - 4   # 373 px  (391 .. 764)
-    FW3 = (RW - 12) // 3  # 3-fader width = 120 px each, 6 px gaps
-    GREY = (0.25, 0.35, 0.30)
-
     breathe_script = (
         'function onValueChanged(key)\n'
         '  if key ~= "x" then return end\n'
@@ -892,27 +866,64 @@ def build_compass_layout():
         'end'
     )
 
-    ry = CTL_Y + 4
-    label(cv, 'hdr_blower', RX, ry, RW, 16, 'BLOWER', size=11, align=1)
-    ry += 18
-    button(cv, 'breathe', RX, ry, RW, 26, CC_BREATHE,
-           toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script)
-    label(cv, 'lbl_breathe', RX, ry+28, RW, 12, 'BREATHE', size=10, align=2)
-    ry += 42
-    fader(cv, 'blower_high',    RX,               ry, FW3, 88, CC_BLOWER_HIGH,
-          default=0.0, rgb=(0.20, 0.80, 0.60))
-    fader(cv, 'blower_low',     RX+FW3+6,         ry, FW3, 88, CC_BLOWER_LOW,
-          default=0.0, rgb=GREY, interactive=False)
-    fader(cv, 'breathing_rate', RX+2*(FW3+6),     ry, FW3, 88, CC_BREATHING_RATE,
-          default=0.0, rgb=GREY, interactive=False)
-    label(cv, 'lbl_bl_hi',   RX,            ry+90, FW3, 12, 'BLW HI',  size=10, align=2)
-    label(cv, 'lbl_bl_lo',   RX+FW3+6,      ry+90, FW3, 12, 'BLW LO',  size=10, align=2)
-    label(cv, 'lbl_bl_rate', RX+2*(FW3+6),  ry+90, FW3, 12, 'RATE',    size=10, align=2)
-    ry += 104
+    # ── left column ───────────────────────────────────────────────────────────
+    # Row 1: HALT ALL + RETRACT ALL
+    button(cv, 'halt',    LX,       y0, BW, BH1, CC_HALT,
+           rgb=(0.90, 0.10, 0.10), script=halt_script)
+    label(cv,  'lbl_halt', LX,      y0+BH1+2, BW, LBLH, 'HALT ALL', size=11, align=2)
+    button(cv, 'retract', LX+BW+BG, y0, BW, BH1, CC_RETRACT,
+           rgb=(0.90, 0.50, 0.10), script=retract_script)
+    label(cv,  'lbl_retract', LX+BW+BG, y0+BH1+2, BW, LBLH, 'RETRACT ALL', size=11, align=2)
 
-    label(cv, 'lbl_shutoff', RX, ry, RW, 14, 'AIR SHUTOFF', size=11, align=2)
-    ry += 16
-    fader(cv, 'shutoff', RX, ry, RW, 28, CC_SHUTOFF, default=0.0, rgb=(0.70, 0.15, 0.70))
+    # Row 2: HEARTBEAT  (y0 + 50+13+44 = 835)
+    rl2 = y0 + BH1 + LBLH + GAP
+    label(cv, 'hdr_heart', LX, rl2, LW, 14, 'HEARTBEAT', size=11, align=1)
+    fader(cv, 'hb_speed',  LX,        rl2+16, HFW, HB_H, CC_HB_SPEED,
+          default=0.0, rgb=(0.90, 0.22, 0.30))
+    fader(cv, 'hb_bright', LX+HFW+BG, rl2+16, HFW, HB_H, CC_HB_BRIGHT,
+          default=0.0, rgb=(0.90, 0.45, 0.15))
+    label(cv, 'lbl_hb_spd', LX,        rl2+16+HB_H+2, HFW, 12, 'HB SPEED',  size=10, align=2)
+    label(cv, 'lbl_hb_bri', LX+HFW+BG, rl2+16+HB_H+2, HFW, 12, 'HB BRIGHT', size=10, align=2)
+
+    # Row 3: RECORD + filename  (anchored at y_rec)
+    RBW  = 76
+    TXX_L = LX + RBW + 8
+    TXW_L = LW - RBW - 8
+    button(cv, 'record', LX, y_rec, RBW, BH2, CC_RECORD,
+           toggle=True, rgb=(0.80, 0.10, 0.10))
+    label(cv,  'lbl_record', LX, y_rec+BH2+2, RBW, LBLH, 'RECORD', size=10, align=2)
+    text_input(cv, 'rec_filename', TXX_L, y_rec, TXW_L, BH2, '/blob/record/filename')
+
+    # ── right column ──────────────────────────────────────────────────────────
+    # Row 1: BREATHE toggle + AIR SHUTOFF fader  (same line, half-width each)
+    BRH = 30
+    button(cv, 'breathe', RX,       y0, RW2, BRH, CC_BREATHE,
+           toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script)
+    label(cv, 'lbl_breathe', RX,    y0+BRH+2, RW2, 12, 'BREATHE',     size=10, align=2)
+    fader(cv, 'shutoff', RX+RW2+8,  y0, RW2, BRH, CC_SHUTOFF,
+          default=0.0, rgb=(0.70, 0.15, 0.70))
+    label(cv, 'lbl_shutoff', RX+RW2+8, y0+BRH+2, RW2, 12, 'AIR SHUTOFF', size=10, align=2)
+
+    # Row 2: BLOWER header + 3 faders  (y0 + 30+12+44 = 812)
+    rr2 = y0 + BRH + 12 + GAP
+    label(cv, 'hdr_blower', RX, rr2, RW, 14, 'BLOWER', size=11, align=1)
+    fader(cv, 'blower_high',    RX,            rr2+16, FW3, BL_H, CC_BLOWER_HIGH,
+          default=0.0, rgb=(0.20, 0.80, 0.60))
+    fader(cv, 'blower_low',     RX+FW3+6,      rr2+16, FW3, BL_H, CC_BLOWER_LOW,
+          default=0.0, rgb=GREY, interactive=False)
+    fader(cv, 'breathing_rate', RX+2*(FW3+6),  rr2+16, FW3, BL_H, CC_BREATHING_RATE,
+          default=0.0, rgb=GREY, interactive=False)
+    label(cv, 'lbl_bl_hi',   RX,           rr2+16+BL_H+2, FW3, 12, 'BLW HI', size=10, align=2)
+    label(cv, 'lbl_bl_lo',   RX+FW3+6,     rr2+16+BL_H+2, FW3, 12, 'BLW LO', size=10, align=2)
+    label(cv, 'lbl_bl_rate', RX+2*(FW3+6), rr2+16+BL_H+2, FW3, 12, 'RATE',   size=10, align=2)
+
+    # Row 3: PLAY + filename  (anchored at y_rec, same as RECORD)
+    TXX_R = RX + RBW + 8
+    TXW_R = RW - RBW - 8
+    button(cv, 'play', RX, y_rec, RBW, BH2, CC_PLAY,
+           toggle=True, rgb=(0.10, 0.70, 0.20))
+    label(cv,  'lbl_play', RX, y_rec+BH2+2, RBW, LBLH, 'PLAY', size=10, align=2)
+    text_input(cv, 'play_filename', TXX_R, y_rec, TXW_R, BH2, '/blob/play/filename')
 
     return root
 
