@@ -112,6 +112,18 @@ class BlobMonitor:
         self.out_name = self._pick_port(self.mid_out, is_out=True,  explicit=out_idx, name_hint=out_name)
         self.mid_in.set_callback(self._on_midi)
         self.mid_in.ignore_types(sysex=True, timing=True, active_sense=True)
+        # Feedback port: sends CCs back to control surface (iPad) so its
+        # sliders track playback and button states stay in sync.
+        self.mid_fb  = None
+        self.fb_name = None
+        fb_keywords  = ("network blob", "network session", "touchosc")
+        fb_dev = rtmidi.MidiOut()
+        for i, p in enumerate(fb_dev.get_ports()):
+            if any(k in p.lower() for k in fb_keywords) and p != self.out_name:
+                fb_dev.open_port(i)
+                self.mid_fb  = fb_dev
+                self.fb_name = p
+                break
 
     def _pick_port(self, dev, is_out, explicit=None, name_hint=None):
         ports = dev.get_ports()
@@ -158,11 +170,18 @@ class BlobMonitor:
         dev.open_port(idx)
         return ports[idx]
 
-    def _send_cc(self, cc, val):
-        try:
-            self.mid_out.send_message([0xB0 | MIDI_CH, cc, int(val) & 0x7F])
-        except Exception:
-            pass
+    def _send_cc(self, cc, val, fb_only=False):
+        msg = [0xB0 | MIDI_CH, cc, int(val) & 0x7F]
+        if not fb_only:
+            try:
+                self.mid_out.send_message(msg)
+            except Exception:
+                pass
+        if self.mid_fb:
+            try:
+                self.mid_fb.send_message(msg)
+            except Exception:
+                pass
 
     def _on_midi(self, event, _=None):
         try:
@@ -236,7 +255,7 @@ class BlobMonitor:
         if old_thr:
             old_thr.join(timeout=0.15)
         if was_playing:
-            self._send_cc(CC_PLAY, 0)      # deactivate PLAY button on surface
+            self._send_cc(CC_PLAY, 0, fb_only=True)   # correct iPad button state
 
     def _stop_record(self):
         with self.lock:
@@ -267,7 +286,7 @@ class BlobMonitor:
             old_thr.join(timeout=0.15)
         if evs_to_save is not None:
             self._save(evs_to_save)
-            self._send_cc(CC_RECORD, 0)    # deactivate REC button on surface
+            self._send_cc(CC_RECORD, 0, fb_only=True)  # correct iPad button state
         self._launch_play()
 
     def _start_loop(self):
@@ -362,8 +381,8 @@ class BlobMonitor:
                     self.loop_mode = False
                     self._sep("─── PLAY DONE ───")
             if done:
-                self._send_cc(CC_PLAY, 0)
-                self._send_cc(CC_LOOP, 0)
+                self._send_cc(CC_PLAY, 0, fb_only=True)
+                self._send_cc(CC_LOOP, 0, fb_only=True)
             break
 
     # ── File I/O ───────────────────────────────────────────────────────────
@@ -405,6 +424,8 @@ class BlobMonitor:
         self.stop_evt.set()
         self.mid_in.close_port()
         self.mid_out.close_port()
+        if self.mid_fb:
+            self.mid_fb.close_port()
 
 
 # ── Curses UI ──────────────────────────────────────────────────────────────
@@ -428,7 +449,8 @@ def draw_ui(scr, mon, colors):
     put(0, max(0, (W - len(title)) // 2), title, curses.A_BOLD | CYAN)
     put(1, 0, f" IN : {mon.in_name}")
     put(2, 0, f" OUT: {mon.out_name}")
-    put(3, 0, "─" * W)
+    put(3, 0, f" FB : {mon.fb_name or '(none)'}")
+    put(4, 0, "─" * W)
 
     # snapshot shared state once
     with mon.lock:
@@ -461,9 +483,9 @@ def draw_ui(scr, mon, colors):
         note   = f"  ({dur:.1f}s buffered)" if events else "  (nothing buffered)"
         loop_tag = "  [LOOP ON]" if loop_mode else ""
         status = f" {mode}{loop_tag}{note}"
-    put(4, 0, status, mode_clr)
+    put(5, 0, status, mode_clr)
 
-    # timeline bar (row 5)
+    # timeline bar (row 6)
     bar_w = W - 18
     if bar_w > 5:
         if events:
@@ -472,17 +494,17 @@ def draw_ui(scr, mon, colors):
             bar    = "█" * filled + "░" * (bar_w - filled)
             m_p, s_p = divmod(int(pos), 60)
             m_d, s_d = divmod(int(dur), 60)
-            put(5, 0, f" [{bar}] {m_p:02d}:{s_p:02d}/{m_d:02d}:{s_d:02d}")
+            put(6, 0, f" [{bar}] {m_p:02d}:{s_p:02d}/{m_d:02d}:{s_d:02d}")
         else:
-            put(5, 0, f" [{'─' * bar_w}]  (no recording)")
+            put(6, 0, f" [{'─' * bar_w}]  (no recording)")
 
     if filename:
-        put(6, 0, f" {Path(filename).name}", YELLOW)
+        put(7, 0, f" {Path(filename).name}", YELLOW)
 
-    put(7, 0, "─" * W)
+    put(8, 0, "─" * W)
 
     # event log
-    log_top = 8
+    log_top = 9
     log_h   = h - log_top - 2
     with mon.lock:
         log = mon.log[-log_h:]
