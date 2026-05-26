@@ -807,7 +807,7 @@ def build_compass_layout():
     RW2  = (RW - 8) // 2    # 182 px  (BREATHE / SHUTOFF half-widths)
     FW3  = (RW - 12) // 3   # 120 px  (3 blower faders)
     HFW  = BW                # heartbeat fader width = 182 px
-    HB_H = 53                # heartbeat fader height
+    HB_H = 74                # heartbeat fader height
     BL_H = 74                # blower fader height
     GREY = (0.25, 0.35, 0.30)
 
@@ -896,7 +896,7 @@ def build_compass_layout():
 
     # ── right column ──────────────────────────────────────────────────────────
     # Row 1: BREATHE toggle + AIR SHUTOFF fader  (same line, half-width each)
-    BRH = 30
+    BRH = 74
     button(cv, 'breathe', RX,       y0, RW2, BRH, CC_BREATHE,
            toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script)
     label(cv, 'lbl_breathe', RX,    y0+BRH+2, RW2, 12, 'BREATHE',     size=10, align=2)
