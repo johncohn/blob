@@ -102,6 +102,9 @@ class BlobMonitor:
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
+        # Clear button states on the surface at startup
+        self._send_cc(CC_RECORD, 0, fb_only=True)
+        self._send_cc(CC_PLAY,   0, fb_only=True)
 
     # ── MIDI ───────────────────────────────────────────────────────────────
 
@@ -287,6 +290,8 @@ class BlobMonitor:
         if evs_to_save is not None:
             self._save(evs_to_save)
             self._send_cc(CC_RECORD, 0, fb_only=True)  # correct iPad button state
+        with self.lock:
+            self.loop_mode = True
         self._launch_play()
 
     def _start_loop(self):
