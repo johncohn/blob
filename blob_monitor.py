@@ -2,18 +2,32 @@
 """
 blob_monitor.py — Echo, record, and play back Blob TouchOSC surface controls.
 
-Keys: [R]ec  [P]lay  [Space]Pause  [[]Rewind  [L]oad latest  [Q]uit
-Surface: CC39=RECORD toggle, CC40=PLAY toggle (all ch 2)
+Recordings are saved as Standard MIDI Files (.mid, Type 0, 960 PPQ) in the
+recordings/ directory, directly editable in any DAW. CC numbers match the
+TouchOSC layout (servos CC16-18, 20-22, 24-26; blower/HB/etc on higher CCs).
+
+Keyboard: [R]ec  [P]lay  [O]Loop-toggle  [Space]Pause  [[]Rewind  [L]oad  [Q]uit
+Surface:  CC39=RECORD toggle, CC40=PLAY toggle (MIDI ch 2)
+          PLAY always loops until clicked again.
+          Pressing PLAY while recording stops recording and starts playback.
+          Pressing RECORD while playing stops playback and starts recording.
 
 Usage:
-    python3 blob_monitor.py              # auto-detect ports
-    python3 blob_monitor.py --list       # list all MIDI ports and exit
-    python3 blob_monitor.py --in 1 --out 2   # use specific port indices
+    python3 blob_monitor.py                          # auto-detect all ports
+    python3 blob_monitor.py --list                   # list MIDI ports and exit
+    python3 blob_monitor.py --in 1 --out 2           # specific port indices
+    python3 blob_monitor.py --in-name "Network blob" --out-name "feather,iac"
 
-Port selection:
-    Input  — auto-selects first port matching: touchosc, network session, iac
-    Output — auto-selects first port matching: feather, m4, samd, widi, cme
+Port selection (auto-detect order):
+    Input    — network blob → touchosc → network session → iac
+    Output   — feather → m4 → samd → widi → cme → fighter → twister
+    Feedback — network blob → network session → touchosc  (sends playback
+               CCs back to the surface so sliders track and buttons stay in sync)
     If auto-detection fails you will be prompted to choose interactively.
+
+Raspberry Pi setup:
+    pip install mido python-rtmidi
+    Run via monitor.sh for name-based port matching across reboots.
 """
 
 import argparse, curses, threading, time
