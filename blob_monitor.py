@@ -90,7 +90,7 @@ def midi_to_events(mid):
 
 class BlobMonitor:
 
-    def __init__(self, in_port=None, out_port=None):
+    def __init__(self, in_port=None, out_port=None, in_name=None, out_name=None):
         self.lock      = threading.Lock()
         self.mode      = "IDLE"    # IDLE RECORDING PLAYING PAUSED
         self.events    = []        # [{'t': float, 'cc': int, 'val': int}, …]
@@ -101,19 +101,19 @@ class BlobMonitor:
         self.loop_mode = False
         self.stop_evt  = threading.Event()
         self._play_thr = None
-        self._open_midi(in_port, out_port)
+        self._open_midi(in_port, out_port, in_name, out_name)
 
     # ── MIDI ───────────────────────────────────────────────────────────────
 
-    def _open_midi(self, in_idx=None, out_idx=None):
+    def _open_midi(self, in_idx=None, out_idx=None, in_name=None, out_name=None):
         self.mid_in   = rtmidi.MidiIn()
         self.mid_out  = rtmidi.MidiOut()
-        self.in_name  = self._pick_port(self.mid_in,  is_out=False, explicit=in_idx)
-        self.out_name = self._pick_port(self.mid_out, is_out=True,  explicit=out_idx)
+        self.in_name  = self._pick_port(self.mid_in,  is_out=False, explicit=in_idx,  name_hint=in_name)
+        self.out_name = self._pick_port(self.mid_out, is_out=True,  explicit=out_idx, name_hint=out_name)
         self.mid_in.set_callback(self._on_midi)
         self.mid_in.ignore_types(sysex=True, timing=True, active_sense=True)
 
-    def _pick_port(self, dev, is_out, explicit=None):
+    def _pick_port(self, dev, is_out, explicit=None, name_hint=None):
         ports = dev.get_ports()
         label = "Output (hardware/Feather)" if is_out else "Input (TouchOSC/IAC)"
 
@@ -123,11 +123,19 @@ class BlobMonitor:
             dev.open_port(explicit)
             return ports[explicit]
 
+        if name_hint is not None:
+            keywords = [k.strip().lower() for k in name_hint.split(",")]
+            for i, p in enumerate(ports):
+                if any(k in p.lower() for k in keywords):
+                    dev.open_port(i)
+                    return p
+            raise SystemExit(f"No port matching '{name_hint}' found in: {ports}")
+
         # Auto-detect: output → hardware; input → TouchOSC routing bus.
         if is_out:
             wanted = ("feather", "m4", "samd", "widi", "cme", "fighter", "twister")
         else:
-            wanted = ("touchosc", "network session", "iac")
+            wanted = ("network blob", "touchosc", "network session", "iac")
 
         for i, p in enumerate(ports):
             if any(k in p.lower() for k in wanted):
@@ -544,10 +552,14 @@ def main():
     ap = argparse.ArgumentParser(description="Blob MIDI Monitor")
     ap.add_argument("--list", action="store_true",
                     help="List all MIDI ports and exit")
-    ap.add_argument("--in",  dest="in_port",  type=int, default=None,
+    ap.add_argument("--in",       dest="in_port",  type=int, default=None,
                     help="Input port index (overrides auto-detect)")
-    ap.add_argument("--out", dest="out_port", type=int, default=None,
+    ap.add_argument("--out",      dest="out_port", type=int, default=None,
                     help="Output port index (overrides auto-detect)")
+    ap.add_argument("--in-name",  dest="in_name",  default=None,
+                    help="Input port name substring (comma-separated, first match wins)")
+    ap.add_argument("--out-name", dest="out_name", default=None,
+                    help="Output port name substring (comma-separated, first match wins)")
     args = ap.parse_args()
 
     if args.list:
@@ -562,7 +574,8 @@ def main():
         return
 
     REC_DIR.mkdir(exist_ok=True)
-    mon = BlobMonitor(in_port=args.in_port, out_port=args.out_port)
+    mon = BlobMonitor(in_port=args.in_port, out_port=args.out_port,
+                      in_name=args.in_name, out_name=args.out_name)
     print(f"\n IN : {mon.in_name}")
     print(f" OUT: {mon.out_name}")
     print()
