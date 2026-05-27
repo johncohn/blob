@@ -798,9 +798,9 @@ def build_compass_layout():
     LW   = 377
     BW   = (LW - 12) // 2   # 182 px
     BG   = 12
-    BH1  = 50
+    BH1  = 74
     BH2  = 40
-    LBLH = 13
+    LBLH = 12
     GAP  = 44
     RX   = 391
     RW   = C_W - RX - 4     # 373 px
@@ -913,8 +913,8 @@ def build_compass_layout():
           default=0.0, rgb=GREY, interactive=False)
     fader(cv, 'breathing_rate', RX+2*(FW3+6),  rr2+16, FW3, BL_H, CC_BREATHING_RATE,
           default=0.0, rgb=GREY, interactive=False)
-    label(cv, 'lbl_bl_hi',   RX,           rr2+16+BL_H+2, FW3, 12, 'BLW HI', size=10, align=2)
-    label(cv, 'lbl_bl_lo',   RX+FW3+6,     rr2+16+BL_H+2, FW3, 12, 'BLW LO', size=10, align=2)
+    label(cv, 'lbl_bl_hi',   RX,           rr2+16+BL_H+2, FW3, 12, 'BLOW HI', size=10, align=2)
+    label(cv, 'lbl_bl_lo',   RX+FW3+6,     rr2+16+BL_H+2, FW3, 12, 'BLOW LO', size=10, align=2)
     label(cv, 'lbl_bl_rate', RX+2*(FW3+6), rr2+16+BL_H+2, FW3, 12, 'RATE',   size=10, align=2)
 
     # Row 3: PLAY + filename  (anchored at y_rec, same as RECORD)
