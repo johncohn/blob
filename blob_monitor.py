@@ -265,6 +265,10 @@ class BlobMonitor:
                                        capture_output=True, timeout=5)
                         with self.lock:
                             self._sep("iPad (johnsipad) wired")
+                            is_rec  = (self.mode == "RECORDING")
+                            is_play = (self.mode in ("PLAYING", "PAUSED"))
+                        self._send_cc(CC_RECORD, 127 if is_rec  else 0, fb_only=True)
+                        self._send_cc(CC_PLAY,   127 if is_play else 0, fb_only=True)
                         wired = True
                 elif wired:
                     with self.lock:
