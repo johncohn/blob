@@ -801,7 +801,7 @@ def build_compass_layout():
     BH1  = 74
     BH2  = 40
     LBLH = 12
-    GAP  = 44
+    GAP  = 23
     RX   = 391
     RW   = C_W - RX - 4     # 373 px
     RW2  = (RW - 8) // 2    # 182 px  (BREATHE / SHUTOFF half-widths)
