@@ -231,7 +231,7 @@ class BlobMonitor:
         # sliders track playback and button states stay in sync.
         self.mid_fb  = None
         self.fb_name = None
-        fb_keywords  = ("network blob", "network session", "touchosc")
+        fb_keywords  = ("network export", "network blob", "network session", "touchosc")
         fb_dev = rtmidi.MidiOut()
         for i, p in enumerate(fb_dev.get_ports()):
             if any(k in p.lower() for k in fb_keywords) and p != self.out_name:
@@ -258,11 +258,11 @@ class BlobMonitor:
                     return p
             raise SystemExit(f"No port matching '{name_hint}' found in: {ports}")
 
-        # Auto-detect: output → hardware; input → TouchOSC routing bus.
+        # Auto-detect: output → hardware; input → TouchOSC/rtpmidid routing bus.
         if is_out:
             wanted = ("feather", "m4", "samd", "widi", "cme", "fighter", "twister")
         else:
-            wanted = ("network blob", "touchosc", "network session", "iac")
+            wanted = ("network export", "network blob", "touchosc", "network session", "iac")
 
         for i, p in enumerate(ports):
             if any(k in p.lower() for k in wanted):
