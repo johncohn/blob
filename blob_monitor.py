@@ -30,7 +30,7 @@ Raspberry Pi setup:
     Run via monitor.sh for name-based port matching across reboots.
 """
 
-import argparse, curses, socket, sys, threading, time
+import argparse, curses, re, shutil, socket, subprocess, sys, threading, time
 
 try:
     import mido
@@ -217,6 +217,8 @@ class BlobMonitor:
         # Clear button states on the surface at startup
         self._send_cc(CC_RECORD, 0, fb_only=True)
         self._send_cc(CC_PLAY,   0, fb_only=True)
+        if shutil.which("rclone"):
+            threading.Thread(target=self._gdrive_startup_sync, daemon=True).start()
 
     # ── MIDI ───────────────────────────────────────────────────────────────
 
@@ -227,18 +229,58 @@ class BlobMonitor:
         self.out_name = self._pick_port(self.mid_out, is_out=True,  explicit=out_idx, name_hint=out_name)
         self.mid_in.set_callback(self._on_midi)
         self.mid_in.ignore_types(sysex=True, timing=True, active_sense=True)
+        if shutil.which("aconnect"):
+            threading.Thread(target=self._wire_ipad, daemon=True).start()
         # Feedback port: sends CCs back to control surface (iPad) so its
         # sliders track playback and button states stay in sync.
         self.mid_fb  = None
         self.fb_name = None
         fb_keywords  = ("network export", "network blob", "network session", "touchosc")
-        fb_dev = rtmidi.MidiOut()
+        fb_dev = rtmidi.MidiOut(name="BlobFeedback")
         for i, p in enumerate(fb_dev.get_ports()):
             if any(k in p.lower() for k in fb_keywords) and p != self.out_name:
                 fb_dev.open_port(i)
                 self.mid_fb  = fb_dev
                 self.fb_name = p
                 break
+
+    def _wire_ipad(self):
+        """Background: watch for iPad ALSA port (rtpmidid:johnsipad) and keep it wired."""
+        wired = False
+        while True:
+            time.sleep(5)
+            try:
+                r = subprocess.run(["aconnect", "-l"], capture_output=True, text=True, timeout=5)
+                if r.returncode != 0:
+                    continue
+                cur_client, cur_cname = None, None
+                portmap = {}
+                for line in r.stdout.splitlines():
+                    cm = re.match(r"^client (\d+): '([^']+)'", line)
+                    if cm:
+                        cur_client, cur_cname = cm.group(1), cm.group(2).strip()
+                        continue
+                    pm = re.match(r"^\s+(\d+) '([^']+)'", line)
+                    if pm and cur_client:
+                        portmap[f"{cur_cname}:{pm.group(2).strip()}"] = f"{cur_client}:{pm.group(1)}"
+                johni   = portmap.get("rtpmidid:johnsipad")
+                blob_in = portmap.get("RtMidiIn Client:RtMidi input")
+                blob_fb = portmap.get("BlobFeedback:RtMidi output")
+                if johni and blob_in and blob_fb:
+                    if not wired:
+                        subprocess.run(["aconnect", johni, blob_in],
+                                       capture_output=True, timeout=5)
+                        subprocess.run(["aconnect", blob_fb, johni],
+                                       capture_output=True, timeout=5)
+                        with self.lock:
+                            self._sep("iPad (johnsipad) wired")
+                        wired = True
+                elif wired:
+                    with self.lock:
+                        self._sep("iPad disconnected")
+                    wired = False
+            except Exception:
+                pass
 
     def _pick_port(self, dev, is_out, explicit=None, name_hint=None):
         ports = dev.get_ports()
@@ -440,6 +482,34 @@ class BlobMonitor:
 
     def _launch_play(self):
         with self.lock:
+            has_events = bool(self.events)
+        if not has_events:
+            if shutil.which("rclone"):
+                threading.Thread(target=self._gdrive_sync_and_play,
+                                 daemon=True).start()
+                return
+            self.load_latest()
+        self._do_launch_play()
+
+    def _gdrive_sync_and_play(self):
+        with self.lock:
+            self._sep("Syncing Drive...")
+        try:
+            r = subprocess.run(["rclone", "copy", "gdrive:", str(REC_DIR)],
+                               capture_output=True, text=True, timeout=30)
+            with self.lock:
+                if r.returncode == 0:
+                    self._sep("← Drive: synced")
+                else:
+                    self._sep(f"Drive err: {r.stderr.strip()[:50]}")
+        except Exception as e:
+            with self.lock:
+                self._sep(f"Drive err: {e}")
+        self.load_latest()
+        self._do_launch_play()
+
+    def _do_launch_play(self):
+        with self.lock:
             if not self.events:
                 self._sep("(nothing to play)")
                 return
@@ -515,9 +585,39 @@ class BlobMonitor:
             with self.lock:
                 self.filename = str(fn)
                 self._sep(f"Saved {fn.name} ({len(events)} events)")
+            import shutil
+            if shutil.which("rclone"):
+                threading.Thread(target=self._gdrive_upload, args=(fn,),
+                                 daemon=True).start()
         except Exception as e:
             with self.lock:
                 self._sep(f"SAVE ERR: {e}")
+
+    def _gdrive_startup_sync(self):
+        try:
+            r = subprocess.run(["rclone", "copy", "gdrive:", str(REC_DIR)],
+                               capture_output=True, text=True, timeout=60)
+            with self.lock:
+                if r.returncode == 0:
+                    self._sep("← Drive: startup sync done")
+                else:
+                    self._sep(f"Drive sync err: {r.stderr.strip()[:50]}")
+        except Exception as e:
+            with self.lock:
+                self._sep(f"Drive sync err: {e}")
+
+    def _gdrive_upload(self, path):
+        try:
+            r = subprocess.run(["rclone", "copy", str(path), "gdrive:"],
+                               capture_output=True, text=True, timeout=60)
+            with self.lock:
+                if r.returncode == 0:
+                    self._sep(f"→ Drive: {Path(path).name}")
+                else:
+                    self._sep(f"Drive err: {r.stderr.strip()[:50]}")
+        except Exception as e:
+            with self.lock:
+                self._sep(f"Drive err: {e}")
 
     def load_latest(self):
         files = sorted(REC_DIR.glob("blob_*.mid"))
@@ -543,6 +643,103 @@ class BlobMonitor:
         self.mid_out.close_port()
         if self.mid_fb:
             self.mid_fb.close_port()
+
+
+def _gdrive_periodic_sync(mon):
+    """Background Drive → Pi sync every 5 minutes (headless mode)."""
+    while True:
+        time.sleep(300)
+        try:
+            r = subprocess.run(["rclone", "copy", "gdrive:", str(REC_DIR)],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                with mon.lock:
+                    mon._sep("← Drive: periodic sync")
+        except Exception:
+            pass
+
+
+def pick_file_ui(scr, rec_dir):
+    """Modal curses file browser. Syncs Drive first, returns selected Path or None."""
+    curses.curs_set(0)
+    h, w = scr.getmaxyx()
+
+    # Sync Drive before showing list
+    if shutil.which("rclone"):
+        scr.erase()
+        try:
+            scr.addstr(0, 0, "Syncing from Drive...", curses.A_BOLD)
+        except curses.error:
+            pass
+        scr.refresh()
+        try:
+            subprocess.run(["rclone", "copy", "gdrive:", str(rec_dir)],
+                           capture_output=True, timeout=20)
+        except Exception:
+            pass
+
+    files = sorted(rec_dir.glob("blob_*.mid"), reverse=True)
+    if not files:
+        scr.erase()
+        try:
+            scr.addstr(0, 0, "No recordings found.  Press any key.", curses.A_BOLD)
+        except curses.error:
+            pass
+        scr.refresh()
+        scr.getch()
+        return None
+
+    sel = 0
+    while True:
+        scr.erase()
+        h, w = scr.getmaxyx()
+        try:
+            scr.addstr(0, 0,
+                       "LOAD FILE   ↑↓ navigate   Enter select   Esc cancel",
+                       curses.A_BOLD)
+            scr.addstr(1, 0, "─" * min(w - 1, 60))
+        except curses.error:
+            pass
+
+        vis_h  = h - 4
+        start  = max(0, sel - vis_h + 1)
+        for i, f in enumerate(files[start:start + vis_h]):
+            row = i + 2
+            if row >= h - 1:
+                break
+            idx = start + i
+            try:
+                dt    = datetime.strptime(f.stem, "blob_%Y%m%d_%H%M%S")
+                label = dt.strftime("%Y-%m-%d  %H:%M:%S")
+            except ValueError:
+                label = f.stem
+            kb   = f.stat().st_size // 1024
+            line = f"  {label}   {kb} KB"
+            attr = curses.A_REVERSE if idx == sel else 0
+            try:
+                scr.addstr(row, 0, line[:w - 1], attr)
+            except curses.error:
+                pass
+
+        try:
+            scr.addstr(h - 1, 0, f"  {sel + 1} / {len(files)}")
+        except curses.error:
+            pass
+        scr.refresh()
+
+        key = scr.getch()
+        if key == curses.KEY_UP and sel > 0:
+            sel -= 1
+        elif key == curses.KEY_DOWN and sel < len(files) - 1:
+            sel += 1
+        elif key == curses.KEY_PPAGE:
+            sel = max(0, sel - vis_h)
+        elif key == curses.KEY_NPAGE:
+            sel = min(len(files) - 1, sel + vis_h)
+        elif key in (10, 13, curses.KEY_ENTER):
+            return files[sel]
+        elif key == 27:   # Escape
+            return None
 
 
 # ── Curses UI ──────────────────────────────────────────────────────────────
@@ -680,7 +877,17 @@ def run_ui(scr, mon):
         elif key in (ord("["), curses.KEY_HOME):
             mon.rewind()
         elif key in (ord("l"), ord("L")):
-            mon.load_latest()
+            selected = pick_file_ui(scr, REC_DIR)
+            if selected:
+                try:
+                    events = midi_to_events(mido.MidiFile(str(selected)))
+                    with mon.lock:
+                        mon.events   = events
+                        mon.filename = str(selected)
+                        mon._sep(f"Loaded {selected.name} ({len(events)} events)")
+                except Exception as e:
+                    with mon.lock:
+                        mon._sep(f"LOAD ERR: {e}")
         elif key in (ord("o"), ord("O")):
             with mon.lock:
                 mon.loop_mode = not mon.loop_mode
@@ -725,6 +932,9 @@ def main():
     headless = not sys.stdin.isatty()
     if headless:
         print("Running headless (no TTY) — OLED + MIDI only.")
+        if shutil.which("rclone"):
+            threading.Thread(target=_gdrive_periodic_sync, args=(mon,),
+                             daemon=True).start()
         oled.start()
         try:
             while True:
