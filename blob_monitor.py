@@ -53,7 +53,7 @@ try:
 except ImportError:
     _OLED_AVAIL = False
 
-MIDI_CH   = 1       # 0-based → MIDI channel 2
+MIDI_CH   = 0       # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
 CC_RECORD = 39
 CC_PLAY   = 40
 CC_LOOP   = 43
@@ -370,6 +370,11 @@ class BlobMonitor:
 
         name = CC_NAMES.get(cc, f"CC{cc}")
         now  = time.time()
+        # Live passthrough: forward raw message to hardware (M4) immediately
+        try:
+            self.mid_out.send_message(list(msg[:3]))
+        except Exception:
+            pass
         with self.lock:
             if self.mode == "RECORDING":
                 t = now - self.rec_start
