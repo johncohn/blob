@@ -30,7 +30,7 @@ Raspberry Pi setup:
     Run via monitor.sh for name-based port matching across reboots.
 """
 
-import argparse, curses, threading, time
+import argparse, curses, socket, sys, threading, time
 
 try:
     import mido
@@ -43,6 +43,15 @@ try:
     import rtmidi
 except ImportError:
     raise SystemExit("Install python-rtmidi: pip install python-rtmidi")
+
+# Optional OLED display (Adafruit PiOLED 128×32, I2C)
+try:
+    from luma.core.interface.serial import i2c as luma_i2c
+    from luma.oled.device import ssd1306
+    from PIL import Image, ImageDraw, ImageFont
+    _OLED_AVAIL = True
+except ImportError:
+    _OLED_AVAIL = False
 
 MIDI_CH   = 1       # 0-based → MIDI channel 2
 CC_RECORD = 39
@@ -100,6 +109,95 @@ def midi_to_events(mid):
                                 'val': msg.value})
     events.sort(key=lambda e: e['t'])
     return events
+
+
+def _local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "no network"
+
+
+class OledDisplay:
+    """128×32 SSD1306 OLED updater. Silently does nothing if hardware absent."""
+
+    W, H = 128, 32
+
+    def __init__(self, mon):
+        self.mon  = mon
+        self.dev  = None
+        self.font = None
+        if not _OLED_AVAIL:
+            return
+        try:
+            serial   = luma_i2c(port=1, address=0x3C)
+            self.dev = ssd1306(serial, width=self.W, height=self.H)
+            self.font = ImageFont.load_default()
+        except Exception:
+            self.dev = None
+
+    def _render(self):
+        img  = Image.new("1", (self.W, self.H), 0)
+        draw = ImageDraw.Draw(img)
+        f    = self.font
+
+        with self.mon.lock:
+            mode     = self.mon.mode
+            pos      = self.mon.play_pos
+            events   = self.mon.events
+            filename = self.mon.filename
+            log      = list(self.mon.log[-1:])   # last event only
+
+        dur = events[-1]["t"] if events else 0.0
+
+        # Row 0: hostname + IP
+        draw.text((0,  0), f"blob  {_local_ip()}", font=f, fill=1)
+
+        # Row 1: mode + timing
+        if mode == "RECORDING":
+            blink = "●" if int(time.time() * 2) % 2 else " "
+            draw.text((0,  8), f"REC {blink}", font=f, fill=1)
+        elif mode in ("PLAYING", "PAUSED"):
+            m_p, s_p = divmod(int(pos), 60)
+            m_d, s_d = divmod(int(dur), 60)
+            draw.text((0,  8), f"{mode}  {m_p:02d}:{s_p:02d}/{m_d:02d}:{s_d:02d}", font=f, fill=1)
+        else:
+            draw.text((0,  8), "IDLE", font=f, fill=1)
+
+        # Row 2: filename (truncated)
+        fn = Path(filename).name if filename else ""
+        draw.text((0, 16), fn[:21], font=f, fill=1)
+
+        # Row 3: last MIDI event
+        if log:
+            _, label, cc, val = log[0]
+            if cc:
+                draw.text((0, 24), f"{label:<10} {val:3d}", font=f, fill=1)
+
+        self.dev.display(img)
+
+    def start(self):
+        if not self.dev:
+            return
+        def _loop():
+            while True:
+                try:
+                    self._render()
+                except Exception:
+                    pass
+                time.sleep(0.1)
+        threading.Thread(target=_loop, daemon=True).start()
+
+    def show_message(self, line1, line2=""):
+        if not self.dev:
+            return
+        img  = Image.new("1", (self.W, self.H), 0)
+        draw = ImageDraw.Draw(img)
+        draw.text((0,  0), line1, font=self.font, fill=1)
+        draw.text((0, 10), line2, font=self.font, fill=1)
+        self.dev.display(img)
 
 
 class BlobMonitor:
@@ -615,19 +713,38 @@ def main():
         return
 
     REC_DIR.mkdir(exist_ok=True)
-    mon = BlobMonitor(in_port=args.in_port, out_port=args.out_port,
-                      in_name=args.in_name, out_name=args.out_name)
+    mon  = BlobMonitor(in_port=args.in_port, out_port=args.out_port,
+                       in_name=args.in_name, out_name=args.out_name)
+    oled = OledDisplay(mon)
+
     print(f"\n IN : {mon.in_name}")
     print(f" OUT: {mon.out_name}")
-    print()
-    print(" NOTE: TouchOSC must send MIDI to the IN port above.")
-    print("       Loop playback goes to the OUT port above.")
-    time.sleep(2)      # let user read port names before curses takes over
-    try:
-        curses.wrapper(run_ui, mon)
-    finally:
-        mon.close()
-    print(f"\nRecordings saved in: {REC_DIR}/")
+    print(f" FB : {mon.fb_name or '(none)'}")
+    print(f" OLED: {'yes' if oled.dev else 'not found'}")
+
+    headless = not sys.stdin.isatty()
+    if headless:
+        print("Running headless (no TTY) — OLED + MIDI only.")
+        oled.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            oled.show_message("BLOB MONITOR", "stopped")
+            mon.close()
+    else:
+        print()
+        print(" NOTE: TouchOSC must send MIDI to the IN port above.")
+        time.sleep(2)
+        oled.start()
+        try:
+            curses.wrapper(run_ui, mon)
+        finally:
+            oled.show_message("BLOB MONITOR", "stopped")
+            mon.close()
+        print(f"\nRecordings saved in: {REC_DIR}/")
 
 
 if __name__ == "__main__":
