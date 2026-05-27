@@ -254,9 +254,10 @@ class BlobMonitor:
                     pm = re.match(r"^\s+(\d+) '([^']+)'", line)
                     if pm and cur_client:
                         portmap[f"{cur_cname}:{pm.group(2).strip()}"] = f"{cur_client}:{pm.group(1)}"
-                johni   = portmap.get("rtpmidid:johnsipad")
-                blob_in = portmap.get("RtMidiIn Client:RtMidi input")
-                blob_fb = portmap.get("BlobFeedback:RtMidi output")
+                lportmap = {k.lower(): v for k, v in portmap.items()}
+                johni   = lportmap.get("rtpmidid:johnsipad")
+                blob_in = lportmap.get("rtmidiin client:rtmidi input")
+                blob_fb = lportmap.get("blobfeedback:rtmidi output")
                 if johni and blob_in and blob_fb:
                     if not wired:
                         subprocess.run(["aconnect", johni, blob_in],
