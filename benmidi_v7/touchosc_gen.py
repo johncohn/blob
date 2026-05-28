@@ -750,14 +750,14 @@ def build_compass_layout():
     #   SW → (0,1) corner (midi key 'x')
     compass_items = [
         (0, 'NW',  CCX - R45, CCY - R45, False),
-        (1, 'N',   CCX,       CCY - R,   False),
+        (1, 'N',   CCX,       CCY - R,   True ),  # reversed
         (2, 'NE',  CCX + R45, CCY - R45, True ),
-        (3, 'W',   CCX - R,   CCY,       True ),
+        (3, 'W',   CCX - R,   CCY,       False),  # reversed
         (4, 'CTR', CCX,       CCY,       True ),
-        (5, 'E',   CCX + R,   CCY,       False),
-        (6, 'SW',  CCX - R45, CCY + R45, True ),
+        (5, 'E',   CCX + R,   CCY,       True ),  # reversed
+        (6, 'SW',  CCX - R45, CCY + R45, False),  # reversed
         (7, 'S',   CCX,       CCY + R,   False),
-        (8, 'SE',  CCX + R45, CCY + R45, False),
+        (8, 'SE',  CCX + R45, CCY + R45, True ),  # reversed
     ]
 
     for idx, direction, cx, cy, inv in compass_items:
