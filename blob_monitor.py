@@ -73,12 +73,12 @@ TICKS_PER_BEAT = 960
 MIDI_TEMPO     = 500000   # 120 BPM → 1920 ticks/sec, ~0.52 ms resolution
 
 
-def events_to_midi(events):
+def events_to_midi(events, duration=None):
     mid   = mido.MidiFile(type=0, ticks_per_beat=TICKS_PER_BEAT)
     track = mido.MidiTrack()
     mid.tracks.append(track)
     track.append(mido.MetaMessage('set_tempo', tempo=MIDI_TEMPO, time=0))
-    tps      = TICKS_PER_BEAT * 1_000_000 / MIDI_TEMPO   # 1920.0
+    tps       = TICKS_PER_BEAT * 1_000_000 / MIDI_TEMPO   # 1920.0
     prev_tick = 0
     for ev in sorted(events, key=lambda e: e['t']):
         tick  = round(ev['t'] * tps)
@@ -89,26 +89,34 @@ def events_to_midi(events):
                                   value=ev['val'],
                                   time=delta))
         prev_tick = tick
+    if duration is not None and duration > 0:
+        end_tick = round(duration * tps)
+        track.append(mido.MetaMessage('end_of_track',
+                                      time=max(0, end_tick - prev_tick)))
     return mid
 
 
 def midi_to_events(mid):
+    """Returns (events, duration).  duration comes from end_of_track timing."""
     tempo = next(
         (m.tempo for t in mid.tracks for m in t if m.type == 'set_tempo'),
         MIDI_TEMPO
     )
-    tps    = mid.ticks_per_beat * 1_000_000 / tempo
-    events = []
+    tps      = mid.ticks_per_beat * 1_000_000 / tempo
+    events   = []
+    duration = 0.0
     for track in mid.tracks:
         abs_tick = 0
         for msg in track:
             abs_tick += msg.time
             if msg.type == 'control_change':
                 events.append({'t': abs_tick / tps,
-                                'cc': msg.control,
-                                'val': msg.value})
+                               'cc': msg.control,
+                               'val': msg.value})
+            elif msg.type == 'end_of_track':
+                duration = max(duration, abs_tick / tps)
     events.sort(key=lambda e: e['t'])
-    return events
+    return events, duration
 
 
 def _local_ip():
@@ -211,6 +219,7 @@ class BlobMonitor:
         self.loop_mode = False
         self._last_servo_cc  = None   # last servo CC received (16-26)
         self._last_servo_val = 0
+        self.rec_duration    = 0.0    # wall-clock length of the current recording
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
@@ -474,7 +483,8 @@ class BlobMonitor:
         with self.lock:
             if self.mode != "RECORDING":
                 return
-            self.mode = "IDLE"
+            self.mode         = "IDLE"
+            self.rec_duration = time.time() - self.rec_start
             evs = list(self.events)
             self._sep("─── REC STOP  ───")
         self._save(evs)
@@ -485,8 +495,9 @@ class BlobMonitor:
         with self.lock:
             prev_mode = self.mode
             if self.mode == "RECORDING":
-                evs_to_save = list(self.events)
-                self.mode   = "IDLE"
+                evs_to_save       = list(self.events)
+                self.rec_duration = time.time() - self.rec_start
+                self.mode         = "IDLE"
                 self._sep(f"PLAY pressed (was REC, {len(evs_to_save)} events)")
             elif self.mode in ("PLAYING", "PAUSED"):
                 self.stop_evt.set()
@@ -574,20 +585,21 @@ class BlobMonitor:
             self.mode     = "PLAYING"
             self.play_pos = 0.0
             evs = list(self.events)
+            dur = self.rec_duration
             self._sep("─── PLAYBACK  ───")
         self._play_thr = threading.Thread(
-            target=self._play_fn, args=(evs,), daemon=True)
+            target=self._play_fn, args=(evs, dur), daemon=True)
         self._play_thr.start()
 
     # ── Playback thread ────────────────────────────────────────────────────
 
-    def _play_fn(self, events):
+    def _play_fn(self, events, duration):
         while True:
             wall         = time.time()
             paused_total = 0.0
             pause_wall   = None
             i            = 0
-            while i < len(events) and not self.stop_evt.is_set():
+            while not self.stop_evt.is_set():
                 with self.lock:
                     m = self.mode
                 if m == "PAUSED":
@@ -601,10 +613,12 @@ class BlobMonitor:
                 elapsed = time.time() - wall - paused_total
                 with self.lock:
                     self.play_pos = elapsed
-                if elapsed >= events[i]["t"]:
+                if i < len(events) and elapsed >= events[i]["t"]:
                     e = events[i]
                     self._send_cc(e["cc"], e["val"])
                     i += 1
+                elif i >= len(events) and elapsed >= duration:
+                    break   # all events fired and full duration elapsed
                 else:
                     time.sleep(0.002)
 
@@ -636,7 +650,7 @@ class BlobMonitor:
             REC_DIR.mkdir(exist_ok=True)
             ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
             fn  = REC_DIR / f"blob_{ts}.mid"
-            mid = events_to_midi(events)
+            mid = events_to_midi(events, self.rec_duration)
             mid.save(str(fn))
             mid.save(str(REC_DIR / "latest.mid"))
             with self.lock:
@@ -684,14 +698,15 @@ class BlobMonitor:
             return
         fn = files[-1]
         try:
-            events = midi_to_events(mido.MidiFile(str(fn)))
+            events, dur = midi_to_events(mido.MidiFile(str(fn)))
         except Exception as e:
             with self.lock:
                 self._sep(f"LOAD ERR: {e}")
             return
         with self.lock:
-            self.events   = events
-            self.filename = str(fn)
+            self.events       = events
+            self.rec_duration = dur
+            self.filename     = str(fn)
             self._sep(f"Loaded {fn.name} ({len(events)} events)")
 
     def close(self):
@@ -937,10 +952,11 @@ def run_ui(scr, mon):
             selected = pick_file_ui(scr, REC_DIR)
             if selected:
                 try:
-                    events = midi_to_events(mido.MidiFile(str(selected)))
+                    events, dur = midi_to_events(mido.MidiFile(str(selected)))
                     with mon.lock:
-                        mon.events   = events
-                        mon.filename = str(selected)
+                        mon.events       = events
+                        mon.rec_duration = dur
+                        mon.filename     = str(selected)
                         mon._sep(f"Loaded {selected.name} ({len(events)} events)")
                 except Exception as e:
                     with mon.lock:
