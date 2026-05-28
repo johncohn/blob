@@ -265,8 +265,9 @@ class BlobMonitor:
                 break
 
     def _wire_ipad(self):
-        """Background: watch for iPad ALSA port (rtpmidid:johnsipad) and keep it wired."""
-        wired = False
+        """Background: wire every rtpmidid device port → blob_monitor and back.
+        Handles any number of iPads; re-wires automatically on reconnect."""
+        wired = set()   # ALSA addresses currently wired, e.g. {"128:5"}
         while True:
             time.sleep(5)
             try:
@@ -284,26 +285,37 @@ class BlobMonitor:
                     if pm and cur_client:
                         portmap[f"{cur_cname}:{pm.group(2).strip()}"] = f"{cur_client}:{pm.group(1)}"
                 lportmap = {k.lower(): v for k, v in portmap.items()}
-                johni   = lportmap.get("rtpmidid:johnsipad")
                 blob_in = lportmap.get("rtmidiin client:rtmidi input")
                 blob_fb = lportmap.get("blobfeedback:rtmidi output")
-                if johni and blob_in and blob_fb:
-                    if not wired:
-                        subprocess.run(["aconnect", johni, blob_in],
+                if not blob_in or not blob_fb:
+                    continue
+
+                # All rtpmidid ports except "Network Export" are connected devices
+                devices = {k: v for k, v in lportmap.items()
+                           if k.startswith("rtpmidid:") and "network export" not in k}
+
+                for name, addr in devices.items():
+                    if addr not in wired:
+                        subprocess.run(["aconnect", addr, blob_in],
                                        capture_output=True, timeout=5)
-                        subprocess.run(["aconnect", blob_fb, johni],
+                        subprocess.run(["aconnect", blob_fb, addr],
                                        capture_output=True, timeout=5)
+                        label = name.split(":", 1)[1]
                         with self.lock:
-                            self._sep("iPad (johnsipad) wired")
+                            self._sep(f"device wired: {label}")
                             is_rec  = (self.mode == "RECORDING")
                             is_play = (self.mode in ("PLAYING", "PAUSED"))
                         self._send_cc(CC_RECORD, 127 if is_rec  else 0, fb_only=True)
                         self._send_cc(CC_PLAY,   127 if is_play else 0, fb_only=True)
-                        wired = True
-                elif wired:
+                        wired.add(addr)
+
+                # Forget ports that have disappeared
+                current = set(devices.values())
+                gone    = wired - current
+                for addr in gone:
                     with self.lock:
-                        self._sep("iPad disconnected")
-                    wired = False
+                        self._sep(f"device disconnected: {addr}")
+                wired -= gone
             except Exception:
                 pass
 
