@@ -53,10 +53,14 @@ try:
 except ImportError:
     _OLED_AVAIL = False
 
-MIDI_CH   = 0       # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
-CC_RECORD = 39
-CC_PLAY   = 40
-CC_LOOP   = 43
+MIDI_CH    = 0       # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
+CC_HALT    = 36
+CC_RETRACT = 37
+CC_RECORD  = 39
+CC_PLAY    = 40
+CC_LOOP    = 43
+
+SERVO_CCS  = [16, 17, 18, 20, 21, 22, 24, 25, 26]  # all 9 servo CC numbers
 
 CC_NAMES = {
     16: "Servo 0",   17: "Servo 1",   18: "Servo 2",
@@ -395,6 +399,24 @@ class BlobMonitor:
             except Exception:
                 pass
 
+    def _halt_all(self):
+        """Send center-value (64) to every servo CC 4× with 50 ms gaps.
+        Value 64 = midpoint = zero speed on M4; repeated sends overcome any
+        lost packets and ensure all 9 servos actually stop."""
+        for _ in range(4):
+            for scc in SERVO_CCS:
+                msg = [0xB0 | MIDI_CH, scc, 64]
+                try:
+                    self.mid_out.send_message(msg)
+                except Exception:
+                    self._out_needs_reconnect = True
+                if self.mid_fb:
+                    try:
+                        self.mid_fb.send_message(msg)   # re-centre iPad sliders
+                    except Exception:
+                        pass
+            time.sleep(0.05)
+
     def _on_midi(self, event, _=None):
         try:
             self._on_midi_inner(event)
@@ -425,6 +447,11 @@ class BlobMonitor:
             with self.lock:
                 self._append_log("  btn  ", f"ch{ch} LOOP {'ON' if val>0 else 'off'}", cc, val)
             (self._start_loop if val > 0 else self._stop_play)()
+            return
+        if cc == CC_HALT and val > 0:
+            with self.lock:
+                self._append_log("  btn  ", f"ch{ch} HALT ALL", cc, val)
+            threading.Thread(target=self._halt_all, daemon=True).start()
             return
 
         name = CC_NAMES.get(cc, f"CC{cc}")
