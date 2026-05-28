@@ -45,6 +45,7 @@ import sys
 import uuid
 import zlib
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 MIDI_CH = 0   # TouchOSC uses 0-based channels; 0 → MIDI channel 1 (0xB0), matches M4
 
@@ -933,18 +934,19 @@ def build_compass_layout():
 def main():
     compass = '--compass' in sys.argv
     pos_args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    here = Path(__file__).resolve().parent.parent  # always blob/ regardless of cwd
     if compass:
-        out   = pos_args[0] if pos_args else '../blob_surface_compass.tosc'
+        out   = pos_args[0] if pos_args else str(here / 'blob_surface_compass.tosc')
         root  = build_compass_layout()
     else:
-        out   = pos_args[0] if pos_args else '../blob_surface.tosc'
+        out   = pos_args[0] if pos_args else str(here / 'blob_surface.tosc')
         root  = build_layout()
     xml_bytes = ET.tostring(root, encoding='utf-8', xml_declaration=True)
     with open(out, 'wb') as f:
         f.write(zlib.compress(xml_bytes))
     print(f'Wrote {out}')
     print()
-    print('CC map (all MIDI ch 2):')
+    print(f'CC map (all MIDI ch {MIDI_CH + 1}):')
     for name, cc in [
         ('Servo 0-2',      '16-18'),
         ('Servo 3-5',      '20-22'),
