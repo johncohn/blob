@@ -247,7 +247,6 @@ def node(parent, ntype, name):
     me = ET.SubElement(n, 'messages')
     ch = ET.SubElement(n, 'children')
     prop_s(pr, 'name', name)
-    prop_b(pr, 'locked', True)
     return n, pr, va, me, ch
 
 def box(parent, name, x, y, w, h, rgb=(0.10, 0.10, 0.10)):
