@@ -229,6 +229,13 @@ class BlobMonitor:
         self.out_name = self._pick_port(self.mid_out, is_out=True,  explicit=out_idx, name_hint=out_name)
         self.mid_in.set_callback(self._on_midi)
         self.mid_in.ignore_types(sysex=True, timing=True, active_sense=True)
+        # Keywords used to reopen mid_out if M4 disconnects (USB power cycle)
+        if out_name is not None:
+            self._out_keywords = [k.strip().lower() for k in out_name.split(",")]
+        else:
+            self._out_keywords = ["feather", "m4", "samd", "widi", "cme", "fighter", "twister"]
+        self._out_needs_reconnect = False
+        threading.Thread(target=self._reconnect_out_loop, daemon=True).start()
         if shutil.which("aconnect"):
             threading.Thread(target=self._wire_ipad, daemon=True).start()
         # Feedback port: sends CCs back to control surface (iPad) so its
@@ -287,6 +294,36 @@ class BlobMonitor:
             except Exception:
                 pass
 
+    def _reconnect_out_loop(self):
+        """Background: reopen mid_out when M4 disconnects (USB power cycle)."""
+        while True:
+            time.sleep(2)
+            if not self._out_needs_reconnect:
+                continue
+            try:
+                new_dev = rtmidi.MidiOut()
+                ports   = new_dev.get_ports()
+                for kw in self._out_keywords:
+                    for i, p in enumerate(ports):
+                        if kw in p.lower():
+                            new_dev.open_port(i)
+                            old = self.mid_out
+                            self.mid_out  = new_dev
+                            self.out_name = p
+                            self._out_needs_reconnect = False
+                            with self.lock:
+                                self._sep(f"OUT reconnected: {p}")
+                            try:
+                                old.close_port()
+                            except Exception:
+                                pass
+                            raise StopIteration   # break both loops
+                        continue
+            except StopIteration:
+                pass
+            except Exception:
+                pass
+
     def _pick_port(self, dev, is_out, explicit=None, name_hint=None):
         ports = dev.get_ports()
         label = "Output (hardware/Feather)" if is_out else "Input (TouchOSC/IAC)"
@@ -342,7 +379,7 @@ class BlobMonitor:
             try:
                 self.mid_out.send_message(msg)
             except Exception:
-                pass
+                self._out_needs_reconnect = True
         if self.mid_fb:
             try:
                 self.mid_fb.send_message(msg)
@@ -389,7 +426,7 @@ class BlobMonitor:
             fwd[0] = 0xB0 | MIDI_CH   # normalize channel; iPad may send ch2
             self.mid_out.send_message(fwd)
         except Exception:
-            pass
+            self._out_needs_reconnect = True
         with self.lock:
             if self.mode == "RECORDING":
                 t = now - self.rec_start
