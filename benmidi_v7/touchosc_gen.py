@@ -47,7 +47,7 @@ import zlib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-MIDI_CH = 0   # TouchOSC uses 0-based channels; 0 → MIDI channel 1 (0xB0), matches M4
+MIDI_CH = 1   # TouchOSC uses 0-based channels; 1 → MIDI channel 2 (0xB1)
 
 # ── CC assignments ────────────────────────────────────────────────────────────
 
