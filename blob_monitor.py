@@ -144,11 +144,11 @@ class OledDisplay:
         f    = self.font
 
         with self.mon.lock:
-            mode     = self.mon.mode
-            pos      = self.mon.play_pos
-            events   = self.mon.events
-            filename = self.mon.filename
-            log      = list(self.mon.log[-1:])   # last event only
+            mode      = self.mon.mode
+            pos       = self.mon.play_pos
+            events    = self.mon.events
+            last_scc  = self.mon._last_servo_cc
+            last_sval = self.mon._last_servo_val
 
         dur = events[-1]["t"] if events else 0.0
 
@@ -164,8 +164,15 @@ class OledDisplay:
         else:
             draw.text((0, 11), "IDLE", font=f, fill=1)
 
-        fn = Path(filename).name if filename else "no file"
-        draw.text((0, 22), fn[:21], font=f, fill=1)
+        # Row 3: last servo activity — index (0-8), value, mini bar
+        _CC_SERVO_IDX = {16:0,17:1,18:2,20:3,21:4,22:5,24:6,25:7,26:8}
+        if last_scc is not None:
+            idx  = _CC_SERVO_IDX.get(last_scc, last_scc)
+            blen = int(last_sval / 127 * 8)
+            bar  = "█" * blen + "░" * (8 - blen)
+            draw.text((0, 22), f"S{idx} {last_sval:3d} [{bar}]", font=f, fill=1)
+        else:
+            draw.text((0, 22), "no servo", font=f, fill=1)
 
         self.dev.display(img)
 
@@ -202,6 +209,8 @@ class BlobMonitor:
         self.filename  = ""
         self.log       = []        # (t_str, label, cc, val) — cc==0 ⟹ separator
         self.loop_mode = False
+        self._last_servo_cc  = None   # last servo CC received (16-26)
+        self._last_servo_val = 0
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
@@ -290,10 +299,14 @@ class BlobMonitor:
 
         if name_hint is not None:
             keywords = [k.strip().lower() for k in name_hint.split(",")]
-            for i, p in enumerate(ports):
-                if any(k in p.lower() for k in keywords):
-                    dev.open_port(i)
-                    return p
+            # Try keywords in priority order: first keyword that matches any port wins.
+            # This prevents a low-priority fallback (e.g. "midi through") from
+            # shadowing a higher-priority device that appears later in the port list.
+            for kw in keywords:
+                for i, p in enumerate(ports):
+                    if kw in p.lower():
+                        dev.open_port(i)
+                        return p
             raise SystemExit(f"No port matching '{name_hint}' found in: {ports}")
 
         # Auto-detect: output → hardware; input → TouchOSC/rtpmidid routing bus.
@@ -370,9 +383,11 @@ class BlobMonitor:
 
         name = CC_NAMES.get(cc, f"CC{cc}")
         now  = time.time()
-        # Live passthrough: forward raw message to hardware (M4) immediately
+        # Live passthrough: forward to M4 normalized to MIDI_CH (M4 expects ch1 for servos)
         try:
-            self.mid_out.send_message(list(msg[:3]))
+            fwd    = list(msg[:3])
+            fwd[0] = 0xB0 | MIDI_CH   # normalize channel; iPad may send ch2
+            self.mid_out.send_message(fwd)
         except Exception:
             pass
         with self.lock:
@@ -383,6 +398,9 @@ class BlobMonitor:
             else:
                 t_str = "       s"
             self._append_log(t_str, f"ch{ch} {name}", cc, val)
+            if cc in (16, 17, 18, 20, 21, 22, 24, 25, 26):
+                self._last_servo_cc  = cc
+                self._last_servo_val = val
 
     # ── Log helpers (must be called while holding self.lock) ───────────────
 
@@ -412,8 +430,8 @@ class BlobMonitor:
             self._sep("─── REC START ───")
         if old_thr:
             old_thr.join(timeout=0.15)
-        if was_playing:
-            self._send_cc(CC_PLAY, 0, fb_only=True)   # correct iPad button state
+        self._send_cc(CC_RECORD, 127, fb_only=True)   # confirm REC on
+        self._send_cc(CC_PLAY,   0,   fb_only=True)   # mutual exclusion: PLAY off
 
     def _stop_record(self):
         with self.lock:
@@ -444,7 +462,8 @@ class BlobMonitor:
             old_thr.join(timeout=0.15)
         if evs_to_save is not None:
             self._save(evs_to_save)
-            self._send_cc(CC_RECORD, 0, fb_only=True)  # correct iPad button state
+        self._send_cc(CC_RECORD, 0,   fb_only=True)   # mutual exclusion: REC off
+        self._send_cc(CC_PLAY,   127, fb_only=True)   # confirm PLAY on
         with self.lock:
             self.loop_mode = True
         self._launch_play()
