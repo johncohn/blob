@@ -64,6 +64,7 @@ CC_RECORD         = 39
 CC_PLAY           = 40
 CC_BLOWER_LOW     = 41
 CC_BREATHING_RATE = 42
+CC_LOOP           = 43
 
 
 # ── layout constants ──────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ def node(parent, ntype, name):
     me = ET.SubElement(n, 'messages')
     ch = ET.SubElement(n, 'children')
     prop_s(pr, 'name', name)
+    prop_b(pr, 'locked', True)
     return n, pr, va, me, ch
 
 def box(parent, name, x, y, w, h, rgb=(0.10, 0.10, 0.10)):
