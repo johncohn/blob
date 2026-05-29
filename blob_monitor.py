@@ -54,6 +54,7 @@ except ImportError:
     _OLED_AVAIL = False
 
 MIDI_CH      = 0    # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
+MIDI_CH_FB   = 1    # 0-based → MIDI channel 2 (0xB1); TouchOSC listens on ch2
 CC_HALT      = 36
 CC_RETRACT   = 37
 CC_RECORD    = 39
@@ -259,16 +260,12 @@ class BlobMonitor:
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
         # Feedback port: sends CCs back to control surface (iPad) so its
         # sliders track playback and button states stay in sync.
-        self.mid_fb  = None
-        self.fb_name = None
-        fb_keywords  = ("network export", "network blob", "network session", "touchosc")
+        # Use a virtual port so _wire_ipad() wires it via aconnect — avoids
+        # routing through Network Export which would echo back to blob_in.
         fb_dev = rtmidi.MidiOut(name="BlobFeedback")
-        for i, p in enumerate(fb_dev.get_ports()):
-            if any(k in p.lower() for k in fb_keywords) and p != self.out_name:
-                fb_dev.open_port(i)
-                self.mid_fb  = fb_dev
-                self.fb_name = p
-                break
+        fb_dev.open_virtual_port("BlobFeedback")
+        self.mid_fb  = fb_dev
+        self.fb_name = "BlobFeedback"
 
     def _wire_ipad(self):
         """Background: wire every rtpmidid device port → blob_monitor and back.
@@ -291,8 +288,10 @@ class BlobMonitor:
                     if pm and cur_client:
                         portmap[f"{cur_cname}:{pm.group(2).strip()}"] = f"{cur_client}:{pm.group(1)}"
                 lportmap = {k.lower(): v for k, v in portmap.items()}
-                blob_in = lportmap.get("rtmidiin client:rtmidi input")
-                blob_fb = lportmap.get("blobfeedback:rtmidi output")
+                blob_in = next((v for k, v in lportmap.items()
+                                if k.startswith("rtmidiin client:")), None)
+                blob_fb = next((v for k, v in lportmap.items()
+                                if k.startswith("blobfeedback:")), None)
                 if not blob_in or not blob_fb:
                     continue
 
@@ -419,15 +418,15 @@ class BlobMonitor:
         return ports[idx]
 
     def _send_cc(self, cc, val, fb_only=False):
-        msg = [0xB0 | MIDI_CH, cc, int(val) & 0x7F]
+        val = int(val) & 0x7F
         if not fb_only:
             try:
-                self.mid_out.send_message(msg)
+                self.mid_out.send_message([0xB0 | MIDI_CH, cc, val])
             except Exception:
                 self._out_needs_reconnect = True
         if self.mid_fb:
             try:
-                self.mid_fb.send_message(msg)
+                self.mid_fb.send_message([0xB0 | MIDI_CH_FB, cc, val])
             except Exception:
                 pass
 
@@ -437,14 +436,13 @@ class BlobMonitor:
         lost packets and ensure all 9 servos actually stop."""
         for _ in range(4):
             for scc in SERVO_CCS:
-                msg = [0xB0 | MIDI_CH, scc, 64]
                 try:
-                    self.mid_out.send_message(msg)
+                    self.mid_out.send_message([0xB0 | MIDI_CH,    scc, 64])
                 except Exception:
                     self._out_needs_reconnect = True
                 if self.mid_fb:
                     try:
-                        self.mid_fb.send_message(msg)   # re-centre iPad sliders
+                        self.mid_fb.send_message([0xB0 | MIDI_CH_FB, scc, 64])
                     except Exception:
                         pass
             time.sleep(0.05)
