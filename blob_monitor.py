@@ -53,12 +53,13 @@ try:
 except ImportError:
     _OLED_AVAIL = False
 
-MIDI_CH    = 0       # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
-CC_HALT    = 36
-CC_RETRACT = 37
-CC_RECORD  = 39
-CC_PLAY    = 40
-CC_LOOP    = 43
+MIDI_CH      = 0    # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
+CC_HALT      = 36
+CC_RETRACT   = 37
+CC_RECORD    = 39
+CC_PLAY      = 40
+CC_LOOP      = 43
+CC_CONNECTED = 63   # Pi heartbeat: 127=online, 0=offline; fb_only, never sent to M4
 
 SERVO_CCS  = [16, 17, 18, 20, 21, 22, 24, 25, 26]  # all 9 servo CC numbers
 
@@ -70,6 +71,7 @@ CC_NAMES = {
     36: "HALT",      37: "RETRACT",   38: "Shutoff",
     39: "RECORD",    40: "PLAY",
     41: "Blower Lo", 42: "Brth Rate", 43: "LOOP",
+    63: "Pi-Conn",
 }
 
 REC_DIR        = Path("recordings")
@@ -161,11 +163,13 @@ class OledDisplay:
             events    = self.mon.events
             last_scc  = self.mon._last_servo_cc
             last_sval = self.mon._last_servo_val
+            wired_cnt = self.mon._wired_count
 
         dur = events[-1]["t"] if events else 0.0
 
         # 3 rows at y=0,11,22 — safe for both 8px and 10px default fonts
-        draw.text((0,  0), f"blob  {_local_ip()}", font=f, fill=1)
+        dot = "●" if wired_cnt > 0 else "○"   # ● connected  ○ idle
+        draw.text((0,  0), f"{dot} {_local_ip()}", font=f, fill=1)
 
         if mode == "RECORDING":
             draw.text((0, 11), "REC", font=f, fill=1)
@@ -224,6 +228,7 @@ class BlobMonitor:
         self._last_servo_cc  = None   # last servo CC received (16-26)
         self._last_servo_val = 0
         self.rec_duration    = 0.0    # wall-clock length of the current recording
+        self._wired_count    = 0      # number of iPad/device ports currently wired
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
@@ -250,7 +255,8 @@ class BlobMonitor:
         self._out_needs_reconnect = False
         threading.Thread(target=self._reconnect_out_loop, daemon=True).start()
         if shutil.which("aconnect"):
-            threading.Thread(target=self._wire_ipad, daemon=True).start()
+            threading.Thread(target=self._wire_ipad,     daemon=True).start()
+        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
         # Feedback port: sends CCs back to control surface (iPad) so its
         # sliders track playback and button states stay in sync.
         self.mid_fb  = None
@@ -269,7 +275,7 @@ class BlobMonitor:
         Handles any number of iPads; re-wires automatically on reconnect."""
         wired = set()   # ALSA addresses currently wired, e.g. {"128:5"}
         while True:
-            time.sleep(5)
+            time.sleep(2)
             try:
                 r = subprocess.run(["aconnect", "-l"], capture_output=True, text=True, timeout=5)
                 if r.returncode != 0:
@@ -305,8 +311,9 @@ class BlobMonitor:
                             self._sep(f"device wired: {label}")
                             is_rec  = (self.mode == "RECORDING")
                             is_play = (self.mode in ("PLAYING", "PAUSED"))
-                        self._send_cc(CC_RECORD, 127 if is_rec  else 0, fb_only=True)
-                        self._send_cc(CC_PLAY,   127 if is_play else 0, fb_only=True)
+                        self._send_cc(CC_RECORD,    127 if is_rec  else 0, fb_only=True)
+                        self._send_cc(CC_PLAY,      127 if is_play else 0, fb_only=True)
+                        self._send_cc(CC_CONNECTED, 127, fb_only=True)
                         wired.add(addr)
 
                 # Forget ports that have disappeared
@@ -316,8 +323,21 @@ class BlobMonitor:
                     with self.lock:
                         self._sep(f"device disconnected: {addr}")
                 wired -= gone
+
+                with self.lock:
+                    self._wired_count = len(current & wired)
             except Exception:
                 pass
+
+    def _heartbeat_loop(self):
+        """Send CC_CONNECTED=127 every 3 s while devices are wired; lets TouchOSC
+        show a live green indicator.  The indicator goes grey if the Pi drops."""
+        while True:
+            time.sleep(3)
+            with self.lock:
+                cnt = self._wired_count
+            if cnt > 0:
+                self._send_cc(CC_CONNECTED, 127, fb_only=True)
 
     def _reconnect_out_loop(self):
         """Background: reopen mid_out when M4 disconnects (USB power cycle)."""
@@ -750,6 +770,8 @@ class BlobMonitor:
 
     def close(self):
         self.stop_evt.set()
+        self._send_cc(CC_CONNECTED, 0, fb_only=True)   # tell iPad Pi is offline
+        time.sleep(0.05)
         self.mid_in.close_port()
         self.mid_out.close_port()
         if self.mid_fb:

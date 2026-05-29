@@ -65,6 +65,7 @@ CC_PLAY           = 40
 CC_BLOWER_LOW     = 41
 CC_BREATHING_RATE = 42
 CC_LOOP           = 43
+CC_CONNECTED      = 63   # Pi heartbeat: 127=online, 0=offline; drives the green dot
 
 
 # ── layout constants ──────────────────────────────────────────────────────────
@@ -513,6 +514,30 @@ def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
 
 # ── layout ────────────────────────────────────────────────────────────────────
 
+def conn_indicator(parent, name, x, y, w=28, h=28):
+    """Small LED dot: grey when Pi is offline, green when Pi heartbeat (CC63) arrives."""
+    script = (
+        'function onValueChanged(key)\n'
+        '  if key == "x" then\n'
+        '    if self.values.x > 0 then\n'
+        '      self.color = Color(0.1, 0.9, 0.2)\n'
+        '    else\n'
+        '      self.color = Color(0.25, 0.25, 0.25)\n'
+        '    end\n'
+        '  end\n'
+        'end'
+    )
+    _, pr, va, me, _ = node(parent, 'BUTTON', name)
+    prop_frame(pr, x, y, w, h)
+    prop_color(pr, 0.25, 0.25, 0.25)
+    prop_i(pr, 'buttonType', 0)
+    prop_b(pr, 'outline', True)
+    prop_b(pr, 'interactive', False)
+    prop_s(pr, 'script', script)
+    val_x(va, 0.0)
+    midi_cc(me, CC_CONNECTED)
+
+
 def build_layout():
     root = ET.Element('lexml', version='3')
     rn   = ET.SubElement(root, 'node', ID=uid(), type='GROUP')
@@ -528,6 +553,8 @@ def build_layout():
 
     # ── title ─────────────────────────────────────────────────────────────────
     label(cv, 'title', 0, 4, CANVAS_W, 46, 'BLOB CONTROL', size=26, align=2)
+    conn_indicator(cv, 'pi_conn', CANVAS_W - 36, 8, 28, 28)
+    label(cv, 'lbl_conn', CANVAS_W - 36, 38, 28, 12, 'PI', size=9, align=2)
 
     # ── servo background box ──────────────────────────────────────────────────
     box(cv, 'servo_bg', 10, 45, 662, 660, rgb=(0.10, 0.10, 0.10))
@@ -731,6 +758,8 @@ def build_compass_layout():
     box(cv, 'servo_bg', 4, 4, 760, 716, rgb=(0.08, 0.08, 0.08))
     label(cv, 'title', 4, 6, 760, 20,
           'BLOB CONTROL — COMPASS', size=13, align=2, rgb=(0.40, 0.40, 0.40))
+    conn_indicator(cv, 'pi_conn', C_W - 30, 4, 22, 22)
+    label(cv, 'lbl_conn', C_W - 30, 28, 22, 10, 'PI', size=8, align=2)
 
     # ── compass servo placement ───────────────────────────────────────────────
     # Servo numbering (user 1-9):  1=NW  2=N   3=NE
