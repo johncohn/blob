@@ -399,7 +399,17 @@ def _xy_script(direction):
             '      upd = false\n'
             '    end\n'
         )
-    return header + body + '  end\nend'
+    center_notify = (
+        '\nfunction onReceiveNotify(key, val)\n'
+        '  if key == "center" then\n'
+        '    upd = true\n'
+        '    self.values.x = 0.5\n'
+        '    self.values.y = 0.5\n'
+        '    upd = false\n'
+        '  end\n'
+        'end'
+    )
+    return header + body + '  end\nend' + center_notify
 
 
 def xy_compass(parent, name, cx, cy, size, direction, cc,
@@ -547,8 +557,9 @@ def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
 
 # ── layout ────────────────────────────────────────────────────────────────────
 
-def _scale_node_frames(n, sx, sy, dx, dy):
-    """Recursively scale all 'frame' properties: new = old*s + d."""
+def _scale_frames_deep(n, sx, sy):
+    """Pure-scale all frame properties recursively — no offset.
+    Used for nodes in local (parent-relative) coordinate space."""
     pr = n.find('properties')
     if pr is not None:
         for p in pr:
@@ -556,20 +567,26 @@ def _scale_node_frames(n, sx, sy, dx, dy):
             if kn is not None and kn.text == 'frame':
                 v = p.find('value')
                 if v is not None:
-                    for tag, s, d in [('x',sx,dx),('y',sy,dy),('w',sx,0),('h',sy,0)]:
+                    for tag, s in [('x',sx),('y',sy),('w',sx),('h',sy)]:
                         el = v.find(tag)
                         if el is not None:
-                            el.text = str(int(round(float(el.text)*s + d)))
+                            el.text = str(int(round(float(el.text) * s)))
     children = n.find('children')
     if children is not None:
         for ch in children:
-            _scale_node_frames(ch, sx, sy, dx, dy)
+            _scale_frames_deep(ch, sx, sy)
 
 
 def import_keyboard_widget(canvas, canvas_w=768, canvas_h=1024):
     """Embed the TextInput keyboard widget (hidden overlay) from TextInputDialog.tosc.
     Scales from original 1024×768 to fit our portrait canvas.
-    Triggered via Lua: root:findByName('TextInput',true):notify('showTextDialog', config)"""
+
+    TextInput's direct children use canvas-absolute coords (TextInput spans full canvas),
+    so they get the centering dy offset. Their children use parent-local coords, so
+    they get pure scale only — no offset — otherwise the keys would be displaced.
+
+    Triggered via Lua: root:findByName('TextInput',true):notify('showTextDialog', config)
+    """
     import zlib, copy
     here = Path(__file__).resolve().parent
     data = open(here / 'TextInputDialog.tosc', 'rb').read()
@@ -586,14 +603,33 @@ def import_keyboard_widget(canvas, canvas_w=768, canvas_h=1024):
             break
     if widget is None:
         return
-    # Scale from 1024×768 to fit canvas_w, centred vertically
-    # Original widget occupies the full 1024×768 space
-    sx = canvas_w / 1024          # 0.75 for 768-wide canvas
-    sy = sx                        # uniform scale keeps aspect ratio
-    scaled_h = int(768 * sy)       # 576 for sx=0.75
-    dy = (canvas_h - scaled_h) // 2  # 224 — centres keyboard in portrait canvas
-    _scale_node_frames(widget, sx, sy, 0, dy)
-    # Set frame of the widget itself to full canvas
+
+    sx = canvas_w / 1024
+    sy = sx
+    dy = (canvas_h - int(768 * sy)) // 2   # vertical centering offset (224 for 768×1024)
+
+    # Scale TextInput's direct children with centering offset (canvas-absolute coords)
+    ti_children = widget.find('children')
+    if ti_children is not None:
+        for ch in ti_children:
+            pr_ch = ch.find('properties')
+            if pr_ch is not None:
+                for p in pr_ch:
+                    kn = p.find('key')
+                    if kn is not None and kn.text == 'frame':
+                        v = p.find('value')
+                        if v is not None:
+                            for tag, s, d in [('x',sx,0),('y',sy,dy),('w',sx,0),('h',sy,0)]:
+                                el = v.find(tag)
+                                if el is not None:
+                                    el.text = str(int(round(float(el.text)*s + d)))
+            # Scale all grandchildren+ with pure scale (local/relative coords)
+            gch = ch.find('children')
+            if gch is not None:
+                for gc in gch:
+                    _scale_frames_deep(gc, sx, sy)
+
+    # Set TextInput GROUP frame to full canvas overlay, hidden initially
     pr = widget.find('properties')
     for p in pr:
         k = p.find('key').text
@@ -601,10 +637,9 @@ def import_keyboard_widget(canvas, canvas_w=768, canvas_h=1024):
             v = p.find('value')
             v.find('x').text = '0'; v.find('y').text = '0'
             v.find('w').text = str(canvas_w); v.find('h').text = str(canvas_h)
-        if k == 'visible':
+        elif k == 'visible':
             p.find('value').text = '0'
-    has_visible = any(p.find('key').text == 'visible' for p in pr)
-    if not has_visible:
+    if not any(p.find('key').text == 'visible' for p in pr):
         p = ET.SubElement(pr, 'property', type='b')
         ET.SubElement(p, 'key').text = 'visible'
         ET.SubElement(p, 'value').text = '0'
@@ -622,6 +657,7 @@ def text_input_trigger(parent, name, x, y, w, h, receiver_name, label='SET'):
         '      receiver = rcv,\n'
         '      maxTextLength = 40,\n'
         '      initialText = rcv and rcv.values.text or "",\n'
+        '      advice = "Enter file name",\n'
         '    }\n'
         '    local kb = root:findByName("TextInput", true)\n'
         '    if kb then kb:notify("showTextDialog", config) end\n'
@@ -985,13 +1021,9 @@ def build_compass_layout():
     halt_script = (
         'function onValueChanged(key)\n'
         '  if key == "x" and self.values.x > 0 then\n'
-        '    local yaxis = {[1]=true,[4]=true,[7]=true}\n'
         '    for i = 0, 8 do\n'
         '      local s = root:findByName("servo" .. i, true)\n'
-        '      if s then\n'
-        '        s.values.x = 0.5\n'
-        '        if yaxis[i] then s.values.y = 0.5 end\n'
-        '      end\n'
+        '      if s then s:notify("center") end\n'
         '    end\n'
         '  end\n'
         'end'
