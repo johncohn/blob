@@ -234,6 +234,7 @@ class BlobMonitor:
         self._wired_count    = 0      # number of iPad/device ports currently wired
         self._osc_peers      = {}     # ip → last-seen time; for OSC feedback
         self._osc_sock       = None
+        self._rec_custom_name = ""   # name set from iPad before recording
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
@@ -269,35 +270,56 @@ class BlobMonitor:
 
     def _osc_handle(self, data, ip):
         try:
-            path, val = self._parse_osc_float(data)
+            path, tag, args = self._parse_osc(data)
         except Exception:
             return
-        if not path.startswith('/blob/cc/'):
-            return
-        try:
-            cc = int(path[len('/blob/cc/'):])
-        except ValueError:
-            return
-        midi_val = max(0, min(127, round(val * 127)))
         with self.lock:
             self._osc_peers[ip] = time.time()
-        self._on_midi_inner(([0xB0 | MIDI_CH_FB, cc, midi_val], 0))
+
+        if path == '/blob/record/filename' and args:
+            name = str(args[0]).strip()
+            if name:
+                with self.lock:
+                    self._rec_custom_name = name
+                    self._sep(f"rec name: {name}")
+            return
+
+        if path == '/blob/play/filename' and args:
+            name = str(args[0]).strip()
+            if name:
+                self._load_by_name(name)
+            return
+
+        if path.startswith('/blob/cc/'):
+            try:
+                cc = int(path[len('/blob/cc/'):])
+            except ValueError:
+                return
+            val = float(args[0]) if args else 0.0
+            midi_val = max(0, min(127, round(val * 127)))
+            self._on_midi_inner(([0xB0 | MIDI_CH_FB, cc, midi_val], 0))
 
     @staticmethod
-    def _parse_osc_float(data):
-        """Parse a minimal OSC message; return (path, float_0_to_1)."""
+    def _parse_osc(data):
+        """Parse OSC message; return (path, type_tag, [args])."""
         import struct
-        def next_osc(d, pos):
+        def read_str(d, pos):
             end = d.index(b'\x00', pos)
             s = d[pos:end].decode('utf-8', errors='ignore')
             return s, (end + 4) // 4 * 4
-        path, pos = next_osc(data, 0)
-        tag,  pos = next_osc(data, pos)
-        if 'f' in tag:
-            return path, float(struct.unpack('>f', data[pos:pos+4])[0])
-        if 'i' in tag:
-            return path, float(struct.unpack('>i', data[pos:pos+4])[0])
-        return path, 0.0
+        path, pos = read_str(data, 0)
+        tag,  pos = read_str(data, pos)
+        args = []
+        for t in tag.lstrip(','):
+            if t == 'f':
+                args.append(struct.unpack('>f', data[pos:pos+4])[0]); pos += 4
+            elif t == 'i':
+                args.append(struct.unpack('>i', data[pos:pos+4])[0]); pos += 4
+            elif t == 's':
+                s, pos = read_str(data, pos); args.append(s)
+            else:
+                break
+        return path, tag, args
 
     def _send_osc_feedback(self, cc, val):
         if not self._osc_peers or not self._osc_sock:
@@ -782,11 +804,40 @@ class BlobMonitor:
 
     # ── File I/O ───────────────────────────────────────────────────────────
 
+    def _load_by_name(self, name):
+        """Load a recording by name fragment (case-insensitive prefix match)."""
+        files = sorted(REC_DIR.glob("*.mid"))
+        name_lower = name.lower().replace(' ', '_')
+        match = next((f for f in files if f.stem.lower().startswith(name_lower)), None)
+        if not match:
+            match = next((f for f in files if name_lower in f.stem.lower()), None)
+        if not match:
+            with self.lock:
+                self._sep(f"no file matching '{name}'")
+            return
+        try:
+            events, dur = midi_to_events(mido.MidiFile(str(match)))
+            with self.lock:
+                self.events       = events
+                self.rec_duration = dur
+                self.filename     = str(match)
+                self._sep(f"Loaded {match.name} ({len(events)} events)")
+        except Exception as e:
+            with self.lock:
+                self._sep(f"LOAD ERR: {e}")
+
     def _save(self, events):
         try:
             REC_DIR.mkdir(exist_ok=True)
-            ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
-            fn  = REC_DIR / f"blob_{ts}.mid"
+            with self.lock:
+                custom = self._rec_custom_name
+                self._rec_custom_name = ""
+            if custom:
+                safe = re.sub(r'[^\w\-. ]', '_', custom).strip().replace(' ', '_')
+                fn = REC_DIR / f"{safe}.mid"
+            else:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                fn = REC_DIR / f"blob_{ts}.mid"
             mid = events_to_midi(events, self.rec_duration)
             mid.save(str(fn))
             mid.save(str(REC_DIR / "latest.mid"))
