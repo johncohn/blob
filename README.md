@@ -29,12 +29,12 @@ iPad (TouchOSC)
 blob_monitor.py              Main Pi service — MIDI/OSC hub, recording, playback
 benmidi_v7/
   touchosc_gen.py            Generates the TouchOSC layout file
+  TextInputDialog.tosc       On-screen keyboard widget (imported into layout)
   blob1.band/                GarageBand session for editing recordings
   bentest*.mid               Test recordings
-recordings/                  MIDI recordings (auto-named or custom-named)
-  latest.mid                 Symlink/copy of most recent recording
-blob_surface_compass.tosc    TouchOSC layout (compass layout — the active one)
-blob_surface.tosc            TouchOSC layout (legacy grid layout — not used)
+recordings/                  MIDI recordings (named or auto-timestamped)
+  latest.mid                 Copy of most recent recording
+blob_surface_compass.tosc    TouchOSC layout (compass layout — the only active one)
 archive/                     Old code and experiments
 ```
 
@@ -78,6 +78,9 @@ Load `blob_surface_compass.tosc` onto each iPad via AirDrop or Files.
 
 Both iPads can be connected simultaneously. The Pi auto-wires any new MIDI device within 2 seconds.
 
+> **Note:** Ben's iPad has an mDNS issue (unknown cause) that prevents it from seeing
+> the Pi in TouchOSC Browse. Using OSC with a direct IP bypasses this entirely.
+
 ---
 
 ## CC Map (MIDI channel 2 / OSC `/blob/cc/{n}`)
@@ -91,7 +94,7 @@ Both iPads can be connected simultaneously. The Pi auto-wires any new MIDI devic
 | Breathe toggle | 33 | enables Blower Low + Breathing Rate |
 | HB Speed | 34 | |
 | HB Bright | 35 | |
-| HALT ALL | 36 | sends center (64) to all servos ×4 |
+| HALT ALL | 36 | centers all servos in one press (notify-based, no constraint drift) |
 | RETRACT ALL | 37 | |
 | Air Shutoff | 38 | |
 | RECORD | 39 | toggle |
@@ -99,7 +102,7 @@ Both iPads can be connected simultaneously. The Pi auto-wires any new MIDI devic
 | Blower Low | 41 | greyed when Breathe off |
 | Breathing Rate | 42 | greyed when Breathe off |
 | LOOP | 43 | toggle |
-| Pi heartbeat | 63 | Pi→iPad only; green dot in top-right corner |
+| Pi heartbeat | 63 | Pi→iPad only; drives the green dot in the top-right corner |
 
 M4 receives servo CCs on **channel 1** (0xB0). TouchOSC sends on channel 2; blob_monitor normalizes.
 
@@ -108,20 +111,34 @@ M4 receives servo CCs on **channel 1** (0xB0). TouchOSC sends on channel 2; blob
 ## Recording and Playback
 
 Recordings are Standard MIDI Files (Type 0, 960 PPQ) in `recordings/`.
+File extensions (`.mid`) are handled automatically — never type them.
 
 ### From the iPad surface
-- **RECORD** button → starts recording; press again to stop and save
-- **PLAY** button → plays latest recording, loops continuously
-- **LOOP** button → same as PLAY
+
+**Naming a recording** (do this before pressing RECORD):
+1. Tap the **SET** button to the right of the RECORD field
+2. Type a name on the on-screen keyboard → OK
+3. The name appears in the RECORD field; the Pi confirms it
+4. Press RECORD — the file will be saved as `name.mid`
+5. Without a name, files are auto-timestamped: `blob_YYYYMMDD_HHMMSS.mid`
+
+**Loading a file for playback**:
+1. Tap the **SET** button to the right of the PLAY field
+2. Type the name (or a prefix/substring) → OK
+3. Pi searches `recordings/` for a match, loads it, confirms the name in the PLAY field
+4. If the name shows `?name`, no matching file was found
+5. Press PLAY
+
+**Transport buttons:**
+- **RECORD** toggle → starts/stops recording; auto-saves on stop
+- **PLAY** toggle → plays loaded recording, loops continuously
 - Pressing PLAY while recording → stops recording and immediately starts playback
 - Pressing RECORD while playing → stops playback and starts new recording
+- **HALT ALL** → sends all servos to center in one press
+- **RETRACT ALL** → sends all servos to their retracted positions
 
-### Custom filenames (via OSC)
-Send an OSC string message **before** pressing RECORD:
-- Path: `/blob/record/filename`, argument: `"song_name"` → saves as `song_name.mid`
-- Path: `/blob/play/filename`, argument: `"song_name"` → loads file matching that name
-
-Without a custom name, recordings are auto-named `blob_YYYYMMDD_HHMMSS.mid`.
+**After recording**, the PLAY field automatically updates to the just-saved filename
+so you can press PLAY immediately without retyping.
 
 ### From the Pi keyboard (interactive mode)
 ```
@@ -130,13 +147,13 @@ Without a custom name, recordings are auto-named `blob_YYYYMMDD_HHMMSS.mid`.
 [O]   Toggle loop mode
 [Space] Pause / resume
 [[]   Rewind
-[L]   Load file picker
+[L]   Load file picker (with Drive sync)
 [Q]   Quit
 ```
 
 ### Google Drive sync
 If `rclone` is configured with a `gdrive:` remote, recordings are automatically
-uploaded after each save and synced on startup.
+uploaded after each save and synced on startup/playback.
 
 ---
 
@@ -155,6 +172,9 @@ cd /Users/jcohn/blob
 python3 benmidi_v7/touchosc_gen.py --compass    # writes blob_surface_compass.tosc
 ```
 
+The on-screen keyboard widget is imported automatically from
+`benmidi_v7/TextInputDialog.tosc` and scaled to fit the 768×1024 portrait canvas.
+
 ---
 
 ## Troubleshooting
@@ -165,18 +185,30 @@ python3 benmidi_v7/touchosc_gen.py --compass    # writes blob_surface_compass.to
 - Pi auto-wires new devices within 2 seconds of mDNS discovery
 
 **Ben's iPad not connecting**
-- Ben's iPad has an mDNS issue (cause unknown); use OSC connection with direct IP (see above)
-- IP changes between John's home (192.168.68.197) and Ben's home (192.168.1.210)
-- Can use `blobpi.local` as hostname if mDNS resolves on that network
+- Use OSC connection with direct IP (see above) — Browse will never work on Ben's iPad
+- IP changes between networks: John's home = `192.168.68.197`, Ben's home = `192.168.1.210`
+- Can also try `blobpi.local` as hostname if that resolves on the current network
 
 **Servos not responding**
-- Check M4 is connected via USB: `aconnect -l` on Pi should show "Feather M4 CAN"
-- M4 auto-reconnects if USB is power-cycled (blob_monitor detects and reopens port)
-- HALT ALL button sends center value (64) ×4 to guarantee stop
+- Check M4 is connected: `aconnect -l` on Pi should show "Feather M4 CAN"
+- M4 auto-reconnects if USB is power-cycled
+- HALT ALL button centers all 9 servos reliably in a single press
 
-**Feedback not working (buttons not toggling)**
-- Feedback uses MIDI channel 2 (0xB1) — this matches TouchOSC's configured channel
-- BlobFeedback ALSA port should show in `aconnect -l`; if missing, restart blob-monitor
+**Feedback not working (buttons/sliders not updating on iPad)**
+- Feedback uses MIDI channel 2 (0xB1) for MIDI-connected iPads
+- OSC feedback sent to port 9000 on Ben's iPad
+- If buttons stay out of sync, restart blob-monitor: `sudo systemctl restart blob-monitor`
+
+**Pi stuck in play mode**
+- HALT ALL stops servos but doesn't stop playback
+- Press PLAY button again to toggle playback off
+- If unresponsive: `sudo systemctl restart blob-monitor` resets to IDLE
+
+**Play not loading the typed filename**
+- Type the name via SET button *before* pressing PLAY
+- The PLAY field confirms the loaded file (shows `?name` if not found)
+- Names are matched by prefix or substring — partial names work
+- Never include `.mid` in the name field; it is added/stripped automatically
 
 **Pi IP changed**
-- Use `blobpi.local` (mDNS hostname) instead of IP — always resolves on any network
+- Use `blobpi.local` instead of a hardcoded IP — resolves via mDNS on any network
