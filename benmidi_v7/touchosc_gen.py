@@ -547,8 +547,28 @@ def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
 
 # ── layout ────────────────────────────────────────────────────────────────────
 
-def import_keyboard_widget(canvas):
+def _scale_node_frames(n, sx, sy, dx, dy):
+    """Recursively scale all 'frame' properties: new = old*s + d."""
+    pr = n.find('properties')
+    if pr is not None:
+        for p in pr:
+            kn = p.find('key')
+            if kn is not None and kn.text == 'frame':
+                v = p.find('value')
+                if v is not None:
+                    for tag, s, d in [('x',sx,dx),('y',sy,dy),('w',sx,0),('h',sy,0)]:
+                        el = v.find(tag)
+                        if el is not None:
+                            el.text = str(int(round(float(el.text)*s + d)))
+    children = n.find('children')
+    if children is not None:
+        for ch in children:
+            _scale_node_frames(ch, sx, sy, dx, dy)
+
+
+def import_keyboard_widget(canvas, canvas_w=768, canvas_h=1024):
     """Embed the TextInput keyboard widget (hidden overlay) from TextInputDialog.tosc.
+    Scales from original 1024×768 to fit our portrait canvas.
     Triggered via Lua: root:findByName('TextInput',true):notify('showTextDialog', config)"""
     import zlib, copy
     here = Path(__file__).resolve().parent
@@ -566,9 +586,21 @@ def import_keyboard_widget(canvas):
             break
     if widget is None:
         return
+    # Scale from 1024×768 to fit canvas_w, centred vertically
+    # Original widget occupies the full 1024×768 space
+    sx = canvas_w / 1024          # 0.75 for 768-wide canvas
+    sy = sx                        # uniform scale keeps aspect ratio
+    scaled_h = int(768 * sy)       # 576 for sx=0.75
+    dy = (canvas_h - scaled_h) // 2  # 224 — centres keyboard in portrait canvas
+    _scale_node_frames(widget, sx, sy, 0, dy)
+    # Set frame of the widget itself to full canvas
     pr = widget.find('properties')
     for p in pr:
         k = p.find('key').text
+        if k == 'frame':
+            v = p.find('value')
+            v.find('x').text = '0'; v.find('y').text = '0'
+            v.find('w').text = str(canvas_w); v.find('h').text = str(canvas_h)
         if k == 'visible':
             p.find('value').text = '0'
     has_visible = any(p.find('key').text == 'visible' for p in pr)
