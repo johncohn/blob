@@ -542,7 +542,7 @@ def label(parent, name, x, y, w, h, text, size=13, align=2,
     prop_b(pr, 'outline', False)
     val_text(va, text)
 
-def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
+def text_input(parent, name, x, y, w, h, osc_path, placeholder=''):
     _, pr, va, me, _ = node(parent, 'TEXT', name, locked=False)
     prop_frame(pr, x, y, w, h)
     prop_color(pr, 0.22, 0.22, 0.22)
@@ -648,19 +648,26 @@ def import_keyboard_widget(canvas, canvas_w=768, canvas_h=1024):
 
 def text_input_trigger(parent, name, x, y, w, h, receiver_name, label='SET'):
     """Momentary button that opens the on-screen keyboard dialog.
-    On OK the result is written to the named TEXT node, firing its OSC message."""
+    Uses callback pattern: button receives 'heresYourText' and writes to the
+    named TEXT node itself, which fires that node's OSC message to the Pi."""
     script = (
         'function onValueChanged(key)\n'
         '  if key == "x" and self.values.x == 0 then\n'
         f'    local rcv = root:findByName("{receiver_name}", true)\n'
         '    local config = {\n'
-        '      receiver = rcv,\n'
+        '      callback = self,\n'
         '      maxTextLength = 40,\n'
         '      initialText = rcv and rcv.values.text or "",\n'
         '      advice = "Enter file name",\n'
         '    }\n'
         '    local kb = root:findByName("TextInput", true)\n'
         '    if kb then kb:notify("showTextDialog", config) end\n'
+        '  end\n'
+        'end\n'
+        'function onReceiveNotify(key, val)\n'
+        '  if key == "heresYourText" then\n'
+        f'    local rcv = root:findByName("{receiver_name}", true)\n'
+        '    if rcv then rcv.values.text = val end\n'
         '  end\n'
         'end'
     )
