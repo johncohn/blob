@@ -386,8 +386,11 @@ class BlobMonitor:
                             self._sep(f"device wired: {label}")
                             is_rec  = (self.mode == "RECORDING")
                             is_play = (self.mode in ("PLAYING", "PAUSED"))
+                        with self.lock:
+                            is_loop = self.loop_mode
                         self._send_cc(CC_RECORD,    127 if is_rec  else 0, fb_only=True)
                         self._send_cc(CC_PLAY,      127 if is_play else 0, fb_only=True)
+                        self._send_cc(CC_LOOP,      127 if is_loop else 0, fb_only=True)
                         self._send_cc(CC_CONNECTED, 127, fb_only=True)
                         wired.add(addr)
 
