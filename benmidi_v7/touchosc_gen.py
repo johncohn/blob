@@ -547,6 +547,74 @@ def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
 
 # ── layout ────────────────────────────────────────────────────────────────────
 
+def import_keyboard_widget(canvas):
+    """Embed the TextInput keyboard widget (hidden overlay) from TextInputDialog.tosc.
+    Triggered via Lua: root:findByName('TextInput',true):notify('showTextDialog', config)"""
+    import zlib, copy
+    here = Path(__file__).resolve().parent
+    data = open(here / 'TextInputDialog.tosc', 'rb').read()
+    ex_root = ET.fromstring(zlib.decompress(data))
+    widget = None
+    for n in ex_root.iter('node'):
+        pr = n.find('properties')
+        if pr is not None:
+            for p in pr:
+                if p.find('key').text == 'name' and p.find('value').text == 'TextInput':
+                    widget = copy.deepcopy(n)
+                    break
+        if widget is not None:
+            break
+    if widget is None:
+        return
+    pr = widget.find('properties')
+    for p in pr:
+        k = p.find('key').text
+        if k == 'visible':
+            p.find('value').text = '0'
+    has_visible = any(p.find('key').text == 'visible' for p in pr)
+    if not has_visible:
+        p = ET.SubElement(pr, 'property', type='b')
+        ET.SubElement(p, 'key').text = 'visible'
+        ET.SubElement(p, 'value').text = '0'
+    canvas.append(widget)
+
+
+def text_input_trigger(parent, name, x, y, w, h, receiver_name, label='SET'):
+    """Momentary button that opens the on-screen keyboard dialog.
+    On OK the result is written to the named TEXT node, firing its OSC message."""
+    script = (
+        'function onValueChanged(key)\n'
+        '  if key == "x" and self.values.x == 0 then\n'
+        f'    local rcv = root:findByName("{receiver_name}", true)\n'
+        '    local config = {\n'
+        '      receiver = rcv,\n'
+        '      maxTextLength = 40,\n'
+        '      initialText = rcv and rcv.values.text or "",\n'
+        '    }\n'
+        '    local kb = root:findByName("TextInput", true)\n'
+        '    if kb then kb:notify("showTextDialog", config) end\n'
+        '  end\n'
+        'end'
+    )
+    _, pr, va, me, _ = node(parent, 'BUTTON', name)
+    prop_frame(pr, x, y, w, h)
+    prop_color(pr, 0.22, 0.50, 0.85)
+    prop_i(pr, 'buttonType', 0)
+    prop_b(pr, 'outline', True)
+    prop_s(pr, 'script', script)
+    val_x(va, 0.0)
+    # display label inside the button
+    _, lpr, lva, _, _ = node(parent, 'LABEL', f'{name}_lbl')
+    prop_frame(lpr, x, y, w, h)
+    prop_color(lpr, 1.0, 1.0, 1.0)
+    prop_i(lpr, 'textSize', 11)
+    prop_i(lpr, 'textAlignH', 2)
+    prop_b(lpr, 'background', False)
+    prop_b(lpr, 'outline', False)
+    prop_b(lpr, 'interactive', False)
+    val_text(lva, label)
+
+
 def conn_indicator(parent, name, x, y, w=28, h=28):
     """Small LED dot: grey when Pi is offline, green when Pi heartbeat (CC63) arrives."""
     script = (
@@ -950,14 +1018,17 @@ def build_compass_layout():
     label(cv, 'lbl_hb_spd', LX,        rl2+16+HB_H+2, HFW, 12, 'HB SPEED',  size=10, align=2)
     label(cv, 'lbl_hb_bri', LX+HFW+BG, rl2+16+HB_H+2, HFW, 12, 'HB BRIGHT', size=10, align=2)
 
-    # Row 3: RECORD + filename  (anchored at y_rec)
+    # Row 3: RECORD + filename display + SET button  (anchored at y_rec)
     RBW  = 76
+    SET_W = 44
     TXX_L = LX + RBW + 8
-    TXW_L = LW - RBW - 8
+    TXW_L = LW - RBW - 8 - SET_W - 4
     button(cv, 'record', LX, y_rec, RBW, BH2, CC_RECORD,
            toggle=True, rgb=(0.80, 0.10, 0.10), osc=True)
     label(cv,  'lbl_record', LX, y_rec+BH2+2, RBW, LBLH, 'RECORD', size=10, align=2)
     text_input(cv, 'rec_filename', TXX_L, y_rec, TXW_L, BH2, '/blob/record/filename')
+    text_input_trigger(cv, 'rec_set', TXX_L + TXW_L + 4, y_rec, SET_W, BH2,
+                       'rec_filename', 'SET')
 
     # ── right column ──────────────────────────────────────────────────────────
     # Row 1: BREATHE toggle + AIR SHUTOFF fader  (same line, half-width each)
@@ -982,13 +1053,17 @@ def build_compass_layout():
     label(cv, 'lbl_bl_lo',   RX+FW3+6,     rr2+16+BL_H+2, FW3, 12, 'BLOW LO', size=10, align=2)
     label(cv, 'lbl_bl_rate', RX+2*(FW3+6), rr2+16+BL_H+2, FW3, 12, 'RATE',   size=10, align=2)
 
-    # Row 3: PLAY + filename  (anchored at y_rec, same as RECORD)
+    # Row 3: PLAY + filename display + SET button  (anchored at y_rec, same as RECORD)
     TXX_R = RX + RBW + 8
-    TXW_R = RW - RBW - 8
+    TXW_R = RW - RBW - 8 - SET_W - 4
     button(cv, 'play', RX, y_rec, RBW, BH2, CC_PLAY,
            toggle=True, rgb=(0.10, 0.70, 0.20), osc=True)
     label(cv,  'lbl_play', RX, y_rec+BH2+2, RBW, LBLH, 'PLAY', size=10, align=2)
     text_input(cv, 'play_filename', TXX_R, y_rec, TXW_R, BH2, '/blob/play/filename')
+    text_input_trigger(cv, 'play_set', TXX_R + TXW_R + 4, y_rec, SET_W, BH2,
+                       'play_filename', 'SET')
+
+    import_keyboard_widget(cv)
 
     return root
 
