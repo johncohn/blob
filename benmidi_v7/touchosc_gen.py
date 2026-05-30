@@ -267,14 +267,14 @@ def osc_text(parent, path):
 
 # ── control builders ──────────────────────────────────────────────────────────
 
-def node(parent, ntype, name):
+def node(parent, ntype, name, locked=True):
     n = ET.SubElement(parent, 'node', ID=uid(), type=ntype)
     pr = ET.SubElement(n, 'properties')
     va = ET.SubElement(n, 'values')
     me = ET.SubElement(n, 'messages')
     ch = ET.SubElement(n, 'children')
     prop_s(pr, 'name', name)
-    prop_b(pr, 'locked', True)
+    prop_b(pr, 'locked', locked)
     return n, pr, va, me, ch
 
 def box(parent, name, x, y, w, h, rgb=(0.10, 0.10, 0.10)):
@@ -533,7 +533,7 @@ def label(parent, name, x, y, w, h, text, size=13, align=2,
     val_text(va, text)
 
 def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
-    _, pr, va, me, _ = node(parent, 'TEXT', name)
+    _, pr, va, me, _ = node(parent, 'TEXT', name, locked=False)
     prop_frame(pr, x, y, w, h)
     prop_color(pr, 0.22, 0.22, 0.22)
     prop_b(pr, 'outline', True)
