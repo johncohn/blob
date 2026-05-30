@@ -538,6 +538,7 @@ def text_input(parent, name, x, y, w, h, osc_path, placeholder='session.mid'):
     prop_color(pr, 0.22, 0.22, 0.22)
     prop_b(pr, 'outline', True)
     prop_b(pr, 'background', True)
+    prop_b(pr, 'interactive', True)
     prop_i(pr, 'textSize', 16)
     prop_i(pr, 'textAlignH', 1)
     val_text(va, placeholder)
