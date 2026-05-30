@@ -403,7 +403,7 @@ def _xy_script(direction):
 
 
 def xy_compass(parent, name, cx, cy, size, direction, cc,
-               rgb=(0.22, 0.60, 1.0), invert=False):
+               rgb=(0.22, 0.60, 1.0), invert=False, osc=False):
     """
     Square XY pad centred at (cx, cy), constrained to the given compass direction.
     N/S/CTR send MIDI from 'y'; all others from 'x'.
@@ -418,6 +418,8 @@ def xy_compass(parent, name, cx, cy, size, direction, cc,
     prop_s(pr, 'script', _xy_script(direction))
     val_xy(va)
     midi_cc(me, cc, key=midi_key, invert=invert)
+    if osc:
+        osc_cc(me, cc, key=midi_key)
 
 
 # Fader double-tap-to-center script (0.50 s window, fires on touch-DOWN).
@@ -825,7 +827,7 @@ def build_compass_layout():
         row, col = divmod(idx, 3)
         cc = SERVO_CCS[row][col]
 
-        xy_compass(cv, f'servo{idx}', cx, cy, PAD, direction, cc, invert=inv)
+        xy_compass(cv, f'servo{idx}', cx, cy, PAD, direction, cc, invert=inv, osc=True)
         if direction in ('N', 'S', 'CTR'):
             linear_mask(cv, f'servo{idx}', cx, cy, PAD, vertical=True)
         elif direction in ('E', 'W'):
@@ -931,19 +933,19 @@ def build_compass_layout():
     # ── left column ───────────────────────────────────────────────────────────
     # Row 1: HALT ALL + RETRACT ALL
     button(cv, 'halt',    LX,       y0, BW, BH1, CC_HALT,
-           rgb=(0.90, 0.10, 0.10), script=halt_script)
+           rgb=(0.90, 0.10, 0.10), script=halt_script, osc=True)
     label(cv,  'lbl_halt', LX,      y0+BH1+2, BW, LBLH, 'HALT ALL', size=11, align=2)
     button(cv, 'retract', LX+BW+BG, y0, BW, BH1, CC_RETRACT,
-           rgb=(0.90, 0.50, 0.10), script=retract_script)
+           rgb=(0.90, 0.50, 0.10), script=retract_script, osc=True)
     label(cv,  'lbl_retract', LX+BW+BG, y0+BH1+2, BW, LBLH, 'RETRACT ALL', size=11, align=2)
 
     # Row 2: HEARTBEAT  (y0 + 50+13+44 = 835)
     rl2 = y0 + BH1 + LBLH + GAP
     label(cv, 'hdr_heart', LX, rl2, LW, 14, 'HEARTBEAT', size=11, align=1)
     fader(cv, 'hb_speed',  LX,        rl2+16, HFW, HB_H, CC_HB_SPEED,
-          default=0.0, rgb=(0.90, 0.22, 0.30))
+          default=0.0, rgb=(0.90, 0.22, 0.30), osc=True)
     fader(cv, 'hb_bright', LX+HFW+BG, rl2+16, HFW, HB_H, CC_HB_BRIGHT,
-          default=0.0, rgb=(0.90, 0.45, 0.15))
+          default=0.0, rgb=(0.90, 0.45, 0.15), osc=True)
     label(cv, 'lbl_hb_spd', LX,        rl2+16+HB_H+2, HFW, 12, 'HB SPEED',  size=10, align=2)
     label(cv, 'lbl_hb_bri', LX+HFW+BG, rl2+16+HB_H+2, HFW, 12, 'HB BRIGHT', size=10, align=2)
 
@@ -952,7 +954,7 @@ def build_compass_layout():
     TXX_L = LX + RBW + 8
     TXW_L = LW - RBW - 8
     button(cv, 'record', LX, y_rec, RBW, BH2, CC_RECORD,
-           toggle=True, rgb=(0.80, 0.10, 0.10))
+           toggle=True, rgb=(0.80, 0.10, 0.10), osc=True)
     label(cv,  'lbl_record', LX, y_rec+BH2+2, RBW, LBLH, 'RECORD', size=10, align=2)
     text_input(cv, 'rec_filename', TXX_L, y_rec, TXW_L, BH2, '/blob/record/filename')
 
@@ -960,21 +962,21 @@ def build_compass_layout():
     # Row 1: BREATHE toggle + AIR SHUTOFF fader  (same line, half-width each)
     BRH = 74
     button(cv, 'breathe', RX,       y0, RW2, BRH, CC_BREATHE,
-           toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script)
+           toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script, osc=True)
     label(cv, 'lbl_breathe', RX,    y0+BRH+2, RW2, 12, 'BREATHE',     size=10, align=2)
     fader(cv, 'shutoff', RX+RW2+8,  y0, RW2, BRH, CC_SHUTOFF,
-          default=0.0, rgb=(0.70, 0.15, 0.70))
+          default=0.0, rgb=(0.70, 0.15, 0.70), osc=True)
     label(cv, 'lbl_shutoff', RX+RW2+8, y0+BRH+2, RW2, 12, 'AIR SHUTOFF', size=10, align=2)
 
     # Row 2: BLOWER header + 3 faders  (y0 + 30+12+44 = 812)
     rr2 = y0 + BRH + 12 + GAP
     label(cv, 'hdr_blower', RX, rr2, RW, 14, 'BLOWER', size=11, align=1)
     fader(cv, 'blower_high',    RX,            rr2+16, FW3, BL_H, CC_BLOWER_HIGH,
-          default=0.0, rgb=(0.20, 0.80, 0.60))
+          default=0.0, rgb=(0.20, 0.80, 0.60), osc=True)
     fader(cv, 'blower_low',     RX+FW3+6,      rr2+16, FW3, BL_H, CC_BLOWER_LOW,
-          default=0.0, rgb=GREY, interactive=False)
+          default=0.0, rgb=GREY, interactive=False, osc=True)
     fader(cv, 'breathing_rate', RX+2*(FW3+6),  rr2+16, FW3, BL_H, CC_BREATHING_RATE,
-          default=0.0, rgb=GREY, interactive=False)
+          default=0.0, rgb=GREY, interactive=False, osc=True)
     label(cv, 'lbl_bl_hi',   RX,           rr2+16+BL_H+2, FW3, 12, 'BLOW HI', size=10, align=2)
     label(cv, 'lbl_bl_lo',   RX+FW3+6,     rr2+16+BL_H+2, FW3, 12, 'BLOW LO', size=10, align=2)
     label(cv, 'lbl_bl_rate', RX+2*(FW3+6), rr2+16+BL_H+2, FW3, 12, 'RATE',   size=10, align=2)
@@ -983,7 +985,7 @@ def build_compass_layout():
     TXX_R = RX + RBW + 8
     TXW_R = RW - RBW - 8
     button(cv, 'play', RX, y_rec, RBW, BH2, CC_PLAY,
-           toggle=True, rgb=(0.10, 0.70, 0.20))
+           toggle=True, rgb=(0.10, 0.70, 0.20), osc=True)
     label(cv,  'lbl_play', RX, y_rec+BH2+2, RBW, LBLH, 'PLAY', size=10, align=2)
     text_input(cv, 'play_filename', TXX_R, y_rec, TXW_R, BH2, '/blob/play/filename')
 
