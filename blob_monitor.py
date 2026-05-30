@@ -55,6 +55,8 @@ except ImportError:
 
 MIDI_CH      = 0    # 0-based → MIDI channel 1 (0xB0); M4 expects ch1 for servo CCs
 MIDI_CH_FB   = 1    # 0-based → MIDI channel 2 (0xB1); TouchOSC listens on ch2
+OSC_IN_PORT  = 8000 # Pi listens for OSC from iPads (no mDNS needed, pure unicast)
+OSC_OUT_PORT = 9000 # Pi sends OSC feedback back to iPads
 CC_HALT      = 36
 CC_RETRACT   = 37
 CC_RECORD    = 39
@@ -230,14 +232,88 @@ class BlobMonitor:
         self._last_servo_val = 0
         self.rec_duration    = 0.0    # wall-clock length of the current recording
         self._wired_count    = 0      # number of iPad/device ports currently wired
+        self._osc_peers      = {}     # ip → last-seen time; for OSC feedback
+        self._osc_sock       = None
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
+        self._start_osc_server()
         # Clear button states on the surface at startup
         self._send_cc(CC_RECORD, 0, fb_only=True)
         self._send_cc(CC_PLAY,   0, fb_only=True)
         if shutil.which("rclone"):
             threading.Thread(target=self._gdrive_startup_sync, daemon=True).start()
+
+    # ── OSC (unicast UDP — works without mDNS, just enter Pi IP in TouchOSC) ─
+
+    def _start_osc_server(self):
+        import socket as _socket
+        try:
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            s.bind(("0.0.0.0", OSC_IN_PORT))
+            self._osc_sock = s
+            threading.Thread(target=self._osc_recv_loop, daemon=True).start()
+            with self.lock:
+                self._sep(f"OSC in  :{OSC_IN_PORT}  out:{OSC_OUT_PORT}")
+        except Exception as e:
+            with self.lock:
+                self._sep(f"OSC server err: {e}")
+
+    def _osc_recv_loop(self):
+        while True:
+            try:
+                data, addr = self._osc_sock.recvfrom(1024)
+                self._osc_handle(data, addr[0])
+            except Exception:
+                pass
+
+    def _osc_handle(self, data, ip):
+        try:
+            path, val = self._parse_osc_float(data)
+        except Exception:
+            return
+        if not path.startswith('/blob/cc/'):
+            return
+        try:
+            cc = int(path[len('/blob/cc/'):])
+        except ValueError:
+            return
+        midi_val = max(0, min(127, round(val * 127)))
+        with self.lock:
+            self._osc_peers[ip] = time.time()
+        self._on_midi_inner(([0xB0 | MIDI_CH_FB, cc, midi_val], 0))
+
+    @staticmethod
+    def _parse_osc_float(data):
+        """Parse a minimal OSC message; return (path, float_0_to_1)."""
+        import struct
+        def next_osc(d, pos):
+            end = d.index(b'\x00', pos)
+            s = d[pos:end].decode('utf-8', errors='ignore')
+            return s, (end + 4) // 4 * 4
+        path, pos = next_osc(data, 0)
+        tag,  pos = next_osc(data, pos)
+        if 'f' in tag:
+            return path, float(struct.unpack('>f', data[pos:pos+4])[0])
+        if 'i' in tag:
+            return path, float(struct.unpack('>i', data[pos:pos+4])[0])
+        return path, 0.0
+
+    def _send_osc_feedback(self, cc, val):
+        if not self._osc_peers or not self._osc_sock:
+            return
+        import struct
+        pb = f'/blob/cc/{cc}'.encode()
+        n  = len(pb) + 1
+        pb = pb + b'\x00' * ((4 - n % 4) % 4 + 1)
+        tb = b',f\x00\x00'
+        vb = struct.pack('>f', val / 127.0)
+        msg = pb + tb + vb
+        for ip in list(self._osc_peers):
+            try:
+                self._osc_sock.sendto(msg, (ip, OSC_OUT_PORT))
+            except Exception:
+                pass
 
     # ── MIDI ───────────────────────────────────────────────────────────────
 
@@ -429,6 +505,7 @@ class BlobMonitor:
                 self.mid_fb.send_message([0xB0 | MIDI_CH_FB, cc, val])
             except Exception:
                 pass
+        self._send_osc_feedback(cc, val)
 
     def _halt_all(self):
         """Send center-value (64) to every servo CC 4× with 50 ms gaps.

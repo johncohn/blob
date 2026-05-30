@@ -180,6 +180,32 @@ def val_text(parent, text=''):
     ET.SubElement(v, 'default').text = text
     ET.SubElement(v, 'defaultPull').text = '0'
 
+def osc_cc(parent, cc, key='x'):
+    """Add an OSC message /blob/cc/{cc} carrying value key as float 0-1.
+    Uses OSC connection 1 — Ben enters the Pi's IP there; no mDNS needed."""
+    osc = ET.SubElement(parent, 'osc')
+    ET.SubElement(osc, 'enabled').text     = '1'
+    ET.SubElement(osc, 'send').text        = '1'
+    ET.SubElement(osc, 'receive').text     = '1'
+    ET.SubElement(osc, 'feedback').text    = '0'
+    ET.SubElement(osc, 'connections').text = '00001'
+    trig = ET.SubElement(ET.SubElement(osc, 'triggers'), 'trigger')
+    ET.SubElement(trig, 'var').text       = key
+    ET.SubElement(trig, 'condition').text = 'ANY'
+    part = ET.SubElement(ET.SubElement(osc, 'path'), 'partial')
+    ET.SubElement(part, 'type').text       = 'CONSTANT'
+    ET.SubElement(part, 'conversion').text = 'STRING'
+    ET.SubElement(part, 'value').text      = f'/blob/cc/{cc}'
+    ET.SubElement(part, 'scaleMin').text   = '0'
+    ET.SubElement(part, 'scaleMax').text   = '1'
+    arg = ET.SubElement(ET.SubElement(osc, 'arguments'), 'partial')
+    ET.SubElement(arg, 'type').text       = 'VALUE'
+    ET.SubElement(arg, 'conversion').text = 'FLOAT'
+    ET.SubElement(arg, 'value').text      = key
+    ET.SubElement(arg, 'scaleMin').text   = '0'
+    ET.SubElement(arg, 'scaleMax').text   = '1'
+
+
 def midi_cc(parent, cc, channel=MIDI_CH, key='x', invert=False):
     """Emit a CONTROLCHANGE MIDI message triggered by value `key` (default 'x').
     invert=True swaps scaleMin/Max so high value → CC 0, low value → CC 127.
@@ -258,7 +284,7 @@ def box(parent, name, x, y, w, h, rgb=(0.10, 0.10, 0.10)):
     prop_b(pr, 'outline', False)
 
 def fader(parent, name, x, y, w, h, cc=None, default=0.5,
-          rgb=(0.22, 0.60, 1.0), interactive=True, script='', invert=False):
+          rgb=(0.22, 0.60, 1.0), interactive=True, script='', invert=False, osc=False):
     _, pr, va, me, _ = node(parent, 'FADER', name)
     prop_frame(pr, x, y, w, h)
     prop_color(pr, *rgb)
@@ -270,6 +296,8 @@ def fader(parent, name, x, y, w, h, cc=None, default=0.5,
     val_x(va, default)
     if cc is not None:
         midi_cc(me, cc, invert=invert)
+        if osc:
+            osc_cc(me, cc)
 
 def _xy_script(direction):
     """
@@ -477,7 +505,7 @@ def linear_mask(parent, name, cx, cy, size, vertical=True):
 
 
 def button(parent, name, x, y, w, h, cc=None, toggle=False,
-           rgb=(0.85, 0.15, 0.15), script=''):
+           rgb=(0.85, 0.15, 0.15), script='', osc=False):
     _, pr, va, me, _ = node(parent, 'BUTTON', name)
     prop_frame(pr, x, y, w, h)
     prop_color(pr, *rgb)
@@ -488,6 +516,8 @@ def button(parent, name, x, y, w, h, cc=None, toggle=False,
     val_x(va, 0.0)
     if cc is not None:
         midi_cc(me, cc)
+        if osc:
+            osc_cc(me, cc)
 
 def label(parent, name, x, y, w, h, text, size=13, align=2,
           rgb=(0.80, 0.80, 0.80)):
@@ -596,7 +626,7 @@ def build_layout():
             fx  = SV_X0 + col * (SV_W + SV_GAPX)
             fy  = SV_Y0 + row * (SV_H + SV_LBLH + SV_GAPY)
             fader(cv, f'servo{idx}', fx, fy, SV_W, SV_H, cc,
-                  script=servo_script)
+                  script=servo_script, osc=True)
             label(cv, f'lbl_sv{idx}', fx, fy + SV_H + 4, SV_W, SV_LBLH,
                   str(idx + 1), size=16, align=2)
 
@@ -621,7 +651,7 @@ def build_layout():
     )
     BREATHE_Y = BL_Y0 + 24
     button(cv, 'breathe', R_X, BREATHE_Y, R_W, 42, CC_BREATHE,
-           toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script)
+           toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script, osc=True)
     label(cv, 'lbl_breathe', R_X, BREATHE_Y + 42 + 2, R_W, 18,
           'BREATHE', size=12, align=2)
 
@@ -630,11 +660,11 @@ def build_layout():
     GREY = (0.25, 0.35, 0.30)
 
     fader(cv, 'blower_high', R_X,                       BL_FADER_Y,
-          BL_FW, BL_FH, CC_BLOWER_HIGH, default=0.0, rgb=(0.20, 0.80, 0.60))
+          BL_FW, BL_FH, CC_BLOWER_HIGH, default=0.0, rgb=(0.20, 0.80, 0.60), osc=True)
     fader(cv, 'blower_low',  R_X + BL_FW + BL_GAP,     BL_FADER_Y,
-          BL_FW, BL_FH, CC_BLOWER_LOW,  default=0.0, rgb=GREY, interactive=False)
+          BL_FW, BL_FH, CC_BLOWER_LOW,  default=0.0, rgb=GREY, interactive=False, osc=True)
     fader(cv, 'breathing_rate', R_X + 2*(BL_FW+BL_GAP), BL_FADER_Y,
-          BL_FW, BL_FH, CC_BREATHING_RATE, default=0.0, rgb=GREY, interactive=False)
+          BL_FW, BL_FH, CC_BREATHING_RATE, default=0.0, rgb=GREY, interactive=False, osc=True)
 
     LBL_Y = BL_FADER_Y + BL_FH + 4
     label(cv, 'lbl_bl_hi',   R_X,                       LBL_Y, BL_FW, 18,
@@ -650,7 +680,7 @@ def build_layout():
     label(cv, 'lbl_shutoff', R_X, SO_LBL_Y, R_W, 20,
           'AIR SHUTOFF', size=13, align=2)
     fader(cv, 'shutoff', R_X, SO_FADER_Y, R_W, SO_H,
-          CC_SHUTOFF, default=0.0, rgb=(0.70, 0.15, 0.70))
+          CC_SHUTOFF, default=0.0, rgb=(0.70, 0.15, 0.70), osc=True)
 
     # ── heartbeat ─────────────────────────────────────────────────────────────
     HB_HDR_Y  = SO_FADER_Y + SO_H + 18
@@ -658,9 +688,9 @@ def build_layout():
     label(cv, 'hdr_heart', R_X, HB_HDR_Y, R_W, 20,
           'HEARTBEAT', size=13, align=1)
     fader(cv, 'hb_speed',  R_X,              HB_FADER_Y, HB_FW, HB_FH,
-          CC_HB_SPEED,  default=0.0, rgb=(0.90, 0.22, 0.30))
+          CC_HB_SPEED,  default=0.0, rgb=(0.90, 0.22, 0.30), osc=True)
     fader(cv, 'hb_bright', R_X + HB_FW + 20, HB_FADER_Y, HB_FW, HB_FH,
-          CC_HB_BRIGHT, default=0.0, rgb=(0.90, 0.45, 0.15))
+          CC_HB_BRIGHT, default=0.0, rgb=(0.90, 0.45, 0.15), osc=True)
     HB_LBL_Y = HB_FADER_Y + HB_FH + 4
     label(cv, 'lbl_hb_spd', R_X,              HB_LBL_Y, HB_FW, 18,
           'HEARTBEAT',   size=12, align=2)
@@ -677,9 +707,9 @@ def build_layout():
     label(cv, 'hdr_local', R_X, LCL_HDR_Y, R_W, 20,
           'LOCAL LOOP', size=13, align=1)
     button(cv, 'capture', R_X, LCL_BTN_Y, LCL_BTN_W, LCL_BTN_H,
-           cc=CC_RECORD, toggle=True, rgb=(0.85, 0.45, 0.10))
+           cc=CC_RECORD, toggle=True, rgb=(0.85, 0.45, 0.10), osc=True)
     button(cv, 'loop',    R_X + LCL_BTN_W + 8, LCL_BTN_Y, LCL_BTN_W, LCL_BTN_H,
-           cc=CC_LOOP,   toggle=True, rgb=(0.10, 0.65, 0.70))
+           cc=CC_LOOP,   toggle=True, rgb=(0.10, 0.65, 0.70), osc=True)
     label(cv, 'lbl_capture', R_X, LCL_BTN_Y + LCL_BTN_H + 2, LCL_BTN_W, 18,
           'CAPTURE', size=12, align=2)
     label(cv, 'lbl_loop', R_X + LCL_BTN_W + 8, LCL_BTN_Y + LCL_BTN_H + 2, LCL_BTN_W, 18,
@@ -707,25 +737,25 @@ def build_layout():
         'end'
     )
     button(cv, 'halt',    SV_X0,       BTN_Y, 280, BTN_H, CC_HALT,
-           rgb=(0.90, 0.10, 0.10), script=halt_script)
+           rgb=(0.90, 0.10, 0.10), script=halt_script, osc=True)
     label(cv,  'lbl_halt', SV_X0, BTN_Y + BTN_H + 2, 280, BTN_LBL,
           'HALT ALL', size=12, align=2)
 
     button(cv, 'retract', SV_X0 + 310, BTN_Y, 280, BTN_H, CC_RETRACT,
-           rgb=(0.90, 0.50, 0.10), script=retract_script)
+           rgb=(0.90, 0.50, 0.10), script=retract_script, osc=True)
     label(cv,  'lbl_retract', SV_X0 + 310, BTN_Y + BTN_H + 2, 280, BTN_LBL,
           'RETRACT ALL', size=12, align=2)
 
     # ── record / play ─────────────────────────────────────────────────────────
     button(cv, 'record', SV_X0, REC_Y,  ABTW, REC_H,  CC_RECORD,
-           toggle=True, rgb=(0.80, 0.10, 0.10))
+           toggle=True, rgb=(0.80, 0.10, 0.10), osc=True)
     label(cv,  'lbl_record', SV_X0, REC_Y + REC_H + 2, ABTW, BTN_LBL,
           'RECORD', size=12, align=2)
     text_input(cv, 'rec_filename',  TXT_X, REC_Y,  TXT_W, REC_H,
                '/blob/record/filename')
 
     button(cv, 'play', SV_X0, PLAY_Y, ABTW, PLAY_H, CC_PLAY,
-           toggle=True, rgb=(0.10, 0.70, 0.20))
+           toggle=True, rgb=(0.10, 0.70, 0.20), osc=True)
     label(cv,  'lbl_play', SV_X0, PLAY_Y + PLAY_H + 2, ABTW, BTN_LBL,
           'PLAY', size=12, align=2)
     text_input(cv, 'play_filename', TXT_X, PLAY_Y, TXT_W, PLAY_H,
