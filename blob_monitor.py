@@ -78,6 +78,10 @@ CC_NAMES = {
 }
 
 REC_DIR        = Path("recordings")
+
+def _strip_mid(name):
+    """Remove .mid suffix (case-insensitive) from a filename string."""
+    return re.sub(r'\.mid$', '', name, flags=re.IGNORECASE)
 TICKS_PER_BEAT = 960
 MIDI_TEMPO     = 500000   # 120 BPM → 1920 ticks/sec, ~0.52 ms resolution
 
@@ -277,15 +281,16 @@ class BlobMonitor:
             self._osc_peers[ip] = time.time()
 
         if path == '/blob/record/filename' and args:
-            name = str(args[0]).strip()
+            name = _strip_mid(str(args[0]).strip())
             if name:
                 with self.lock:
                     self._rec_custom_name = name
                     self._sep(f"rec name: {name}")
+                self._send_osc_string('/blob/record/filename', name)
             return
 
         if path == '/blob/play/filename' and args:
-            name = str(args[0]).strip()
+            name = _strip_mid(str(args[0]).strip())
             if name:
                 self._load_by_name(name)
             return
@@ -320,6 +325,20 @@ class BlobMonitor:
             else:
                 break
         return path, tag, args
+
+    def _send_osc_string(self, path, text):
+        """Send an OSC string message to all OSC peers (e.g. to update a TEXT field)."""
+        if not self._osc_peers or not self._osc_sock:
+            return
+        def _pad(b):
+            n = len(b) + 1
+            return b + b'\x00' * ((4 - n % 4) % 4 + 1)
+        msg = _pad(path.encode()) + b',s\x00\x00' + _pad(text.encode())
+        for ip in list(self._osc_peers):
+            try:
+                self._osc_sock.sendto(msg, (ip, OSC_OUT_PORT))
+            except Exception:
+                pass
 
     def _send_osc_feedback(self, cc, val):
         if not self._osc_peers or not self._osc_sock:
@@ -805,7 +824,8 @@ class BlobMonitor:
     # ── File I/O ───────────────────────────────────────────────────────────
 
     def _load_by_name(self, name):
-        """Load a recording by name fragment (case-insensitive prefix match)."""
+        """Load a recording by name fragment (case-insensitive prefix/substring match)."""
+        name = _strip_mid(name)   # ignore .mid if user typed it
         files = sorted(REC_DIR.glob("*.mid"))
         name_lower = name.lower().replace(' ', '_')
         match = next((f for f in files if f.stem.lower().startswith(name_lower)), None)
@@ -814,6 +834,7 @@ class BlobMonitor:
         if not match:
             with self.lock:
                 self._sep(f"no file matching '{name}'")
+            self._send_osc_string('/blob/play/filename', f'?{name}')
             return
         try:
             events, dur = midi_to_events(mido.MidiFile(str(match)))
@@ -822,6 +843,8 @@ class BlobMonitor:
                 self.rec_duration = dur
                 self.filename     = str(match)
                 self._sep(f"Loaded {match.name} ({len(events)} events)")
+            # Confirm to iPad which file was actually loaded
+            self._send_osc_string('/blob/play/filename', match.stem)
         except Exception as e:
             with self.lock:
                 self._sep(f"LOAD ERR: {e}")
@@ -833,7 +856,7 @@ class BlobMonitor:
                 custom = self._rec_custom_name
                 self._rec_custom_name = ""
             if custom:
-                safe = re.sub(r'[^\w\-. ]', '_', custom).strip().replace(' ', '_')
+                safe = re.sub(r'[^\w\-. ]', '_', _strip_mid(custom)).strip().replace(' ', '_')
                 fn = REC_DIR / f"{safe}.mid"
             else:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -841,9 +864,13 @@ class BlobMonitor:
             mid = events_to_midi(events, self.rec_duration)
             mid.save(str(fn))
             mid.save(str(REC_DIR / "latest.mid"))
+            stem = fn.stem   # filename without .mid extension
             with self.lock:
                 self.filename = str(fn)
                 self._sep(f"Saved {fn.name} ({len(events)} events)")
+            # Update both iPad fields: confirm rec name, prime play box
+            self._send_osc_string('/blob/record/filename', stem)
+            self._send_osc_string('/blob/play/filename',   stem)
             import shutil
             if shutil.which("rclone"):
                 threading.Thread(target=self._gdrive_upload, args=(fn,),
@@ -896,6 +923,7 @@ class BlobMonitor:
             self.rec_duration = dur
             self.filename     = str(fn)
             self._sep(f"Loaded {fn.name} ({len(events)} events)")
+        self._send_osc_string('/blob/play/filename', fn.stem)
 
     def close(self):
         self.stop_evt.set()
