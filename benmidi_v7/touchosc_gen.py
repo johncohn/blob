@@ -180,9 +180,10 @@ def val_text(parent, text=''):
     ET.SubElement(v, 'default').text = text
     ET.SubElement(v, 'defaultPull').text = '0'
 
-def osc_cc(parent, cc, key='x'):
+def osc_cc(parent, cc, key='x', invert=False):
     """Add an OSC message /blob/cc/{cc} carrying value key as float 0-1.
-    Uses OSC connection 1 — Ben enters the Pi's IP there; no mDNS needed."""
+    Uses OSC connection 1 — Ben enters the Pi's IP there; no mDNS needed.
+    invert=True sends 1-value, matching midi_cc(invert=True)."""
     osc = ET.SubElement(parent, 'osc')
     ET.SubElement(osc, 'enabled').text     = '1'
     ET.SubElement(osc, 'send').text        = '1'
@@ -202,8 +203,8 @@ def osc_cc(parent, cc, key='x'):
     ET.SubElement(arg, 'type').text       = 'VALUE'
     ET.SubElement(arg, 'conversion').text = 'FLOAT'
     ET.SubElement(arg, 'value').text      = key
-    ET.SubElement(arg, 'scaleMin').text   = '0'
-    ET.SubElement(arg, 'scaleMax').text   = '1'
+    ET.SubElement(arg, 'scaleMin').text   = '1' if invert else '0'
+    ET.SubElement(arg, 'scaleMax').text   = '0' if invert else '1'
 
 
 def midi_cc(parent, cc, channel=MIDI_CH, key='x', invert=False):
@@ -297,7 +298,7 @@ def fader(parent, name, x, y, w, h, cc=None, default=0.5,
     if cc is not None:
         midi_cc(me, cc, invert=invert)
         if osc:
-            osc_cc(me, cc)
+            osc_cc(me, cc, invert=invert)
 
 def _xy_script(direction):
     """
@@ -429,7 +430,7 @@ def xy_compass(parent, name, cx, cy, size, direction, cc,
     val_xy(va)
     midi_cc(me, cc, key=midi_key, invert=invert)
     if osc:
-        osc_cc(me, cc, key=midi_key)
+        osc_cc(me, cc, key=midi_key, invert=invert)
 
 
 # Fader double-tap-to-center script (0.50 s window, fires on touch-DOWN).

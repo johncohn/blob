@@ -27,6 +27,7 @@ iPad (TouchOSC)
 
 ```
 blob_monitor.py              Main Pi service — MIDI/OSC hub, recording, playback
+midi_preview.py              Make a recording audible/visible in GarageBand
 benmidi_v7/
   touchosc_gen.py            Generates the TouchOSC layout file
   TextInputDialog.tosc       On-screen keyboard widget (imported into layout)
@@ -42,9 +43,27 @@ archive/                     Old code and experiments
 
 ## Pi Setup
 
+**Hardware:** Raspberry Pi **Zero 2 W**, hostname `blobpi`, user `pi`.
+
+- **Power:** use the **PWR** micro-USB port with a solid 5V / 2A+ supply and a good cable.
+  A weak "dumb" wall wart or thin cable will stall the boot (green LED on, OLED blank,
+  never joins WiFi). `vcgencmd get_throttled` should report `throttled=0x0`.
+- **Feather:** plugs into the **USB** (data) port via an OTG cable/adapter. This is the
+  Zero's only data port, so **do not enable USB-gadget networking** (`dwc2`/`g_ether`) —
+  it stops the Feather from enumerating. Check with `lsusb` → `Adafruit Feather M4 CAN`.
+- **Servos** must have their own power supply, never through the Pi.
+
 The Pi runs `blob-monitor.service` (Restart=always). SSH access:
 ```
-ssh pi@blobpi.local          # password: JCMy3boys!!
+ssh pi@blobpi.local          # password: see password manager
+```
+John's Mac (`~/.ssh/id_ed25519`) is authorized for key login; `sudo` still asks for the
+password. Use `blobpi.local` rather than the raw IP — the saved host key is under that name.
+
+Saved WiFi networks on the Pi: `ORBI51` (→ `192.168.1.210`), John's home
+(→ `192.168.68.197`), `johncohn6s` (phone hotspot), `GMA-WIFI_Access_Point`. To add one:
+```bash
+sudo nmcli dev wifi connect "SSID" password "WIFI_PASSWORD"
 ```
 
 Service commands:
@@ -151,6 +170,17 @@ so you can press PLAY immediately without retyping.
 [Q]   Quit
 ```
 
+### Hearing / viewing a recording in GarageBand
+Recordings hold only servo CC data, so an instrument track plays nothing. Make a preview
+copy with one note track per servo (pitch follows position, C2–C6):
+```bash
+scp pi@blobpi.local:/home/pi/recordings/NAME.mid recordings/
+python3 midi_preview.py recordings/NAME.mid      # → recordings/NAME_preview.mid
+```
+Drag the preview into an empty GarageBand project; each servo becomes its own instrument
+track (select a track, press **Y** to change its sound). The preview is for listening
+only — edits to it don't flow back to the servos.
+
 ### Google Drive sync
 If `rclone` is configured with a `gdrive:` remote, recordings are automatically
 uploaded after each save and synced on startup/playback.
@@ -158,6 +188,19 @@ uploaded after each save and synced on startup/playback.
 ---
 
 ## OLED Display (128×32 SSD1306)
+
+Adafruit PiOLED on I2C address `0x3c`. It plugs straight onto **GPIO header pins 1–6**
+(the corner nearest the SD card), lying over the board:
+
+| Pin | Signal | | Pin | Signal |
+|---|---|---|---|---|
+| 1 | 3.3V | | 2 | 5V |
+| 3 | SDA | | 4 | 5V |
+| 5 | SCL | | 6 | GND |
+
+With jumper wires only four are needed: 1→VIN, 3→SDA, 5→SCL, 6→GND. The display is
+drawn by `blob-monitor`, so it stays blank until the Pi has fully booted and the service
+is running.
 
 - **Row 1:** `● 192.168.68.197` — `●` = iPad connected, `○` = no devices
 - **Row 2:** Mode — `IDLE` / `REC` / `PLAYING MM:SS/MM:SS` / `PAUSED`
@@ -175,6 +218,16 @@ python3 benmidi_v7/touchosc_gen.py --compass    # writes blob_surface_compass.to
 The on-screen keyboard widget is imported automatically from
 `benmidi_v7/TextInputDialog.tosc` and scaled to fit the 768×1024 portrait canvas.
 
+After regenerating, AirDrop the `.tosc` to each iPad and open it in TouchOSC.
+
+### Servo direction
+
+Servo direction is set in the layout, not on the Pi: the last field of each
+`compass_items` entry in `touchosc_gen.py` (`invert`). Currently reversed:
+**servos 2, 3, 5, 6, 9** (CC 17, 18, 21, 22, 26). The flag applies to both the MIDI and
+OSC messages, so MIDI and OSC iPads behave the same. Recordings store the values as
+sent, so recordings made before a direction change still play the old way.
+
 ---
 
 ## Troubleshooting
@@ -189,9 +242,19 @@ The on-screen keyboard widget is imported automatically from
 - IP changes between networks: John's home = `192.168.68.197`, Ben's home = `192.168.1.210`
 - Can also try `blobpi.local` as hostname if that resolves on the current network
 
-**Servos not responding**
-- Check M4 is connected: `aconnect -l` on Pi should show "Feather M4 CAN"
+**Pi won't boot / OLED blank / not on WiFi**
+- Almost always power: try a better supply and cable (see Pi Setup)
+- Allow ~90 s after power-on before expecting the OLED or `blobpi.local`
+
+**Servos not responding (OLED shows slider changes)**
+- Check M4 is connected: `lsusb` should list "Adafruit Feather M4 CAN" and
+  `aconnect -l` should show "Feather M4 CAN". If `lsusb` shows only the root hub, check
+  the OTG cable and make sure USB-gadget mode is not enabled in `/boot/firmware/cmdline.txt`
+- Check the servos' own power supply is on
 - M4 auto-reconnects if USB is power-cycled
+
+**Some servos move the wrong way**
+- See "Servo direction" above — edit `invert` in `touchosc_gen.py`, regenerate, re-AirDrop
 - HALT ALL button centers all 9 servos reliably in a single press
 
 **Feedback not working (buttons/sliders not updating on iPad)**
