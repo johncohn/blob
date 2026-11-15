@@ -5,3 +5,4 @@ __pycache__/
 venv/
 *.html
 benmidi_v7/*.pdf
+*.kicad_prl
