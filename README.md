@@ -27,17 +27,57 @@ iPad (TouchOSC)
 
 ```
 blob_monitor.py              Main Pi service — MIDI/OSC hub, recording, playback
+monitor.sh                   Launcher used on the Pi (port-name hints for blob_monitor)
 midi_preview.py              Make a recording audible/visible in GarageBand
+blob_surface_compass.tosc    TouchOSC layout (compass layout — the only active one)
+blob_surface.tosc            Old grid layout (superseded; `touchosc_gen.py` without --compass)
 benmidi_v7/
+  benmidi_v7.ino             Feather M4 CAN firmware (MIDI CC → PCA9685 servo PWM)
   touchosc_gen.py            Generates the TouchOSC layout file
   TextInputDialog.tosc       On-screen keyboard widget (imported into layout)
   blob1.band/                GarageBand session for editing recordings
   bentest*.mid               Test recordings
+  README.md, TOUCHOSC.md,    HISTORICAL — MIDI Fighter Twister / Mac-hub era docs.
+  RECORDING_SETUP.md         Firmware details still apply; workflows do not.
+  midi_session.py,           HISTORICAL — Mac-side record/play tools from before the Pi
+  midi_led_router.py, run_*.sh
 recordings/                  MIDI recordings (named or auto-timestamped)
   latest.mid                 Copy of most recent recording
-blob_surface_compass.tosc    TouchOSC layout (compass layout — the only active one)
 archive/                     Old code and experiments
 ```
+
+**Lives only on the Pi (not in this repo):** the `blob-monitor` systemd unit, `rtpmidid`
+(Network MIDI daemon that exposes iPads as ALSA ports), the Python venv, `rclone` config,
+and the Pi's own `/home/pi/recordings/` (the repo copy is just whatever was scp'd back).
+
+---
+
+## How the servos actually move (read this first)
+
+The servos are **speed-controlled, not position-controlled**. In `benmidi_v7.ino`:
+
+- CC value **64 = stop** (1500 µs pulse). Above/below 64 drives the actuator one way or the
+  other, faster the farther from 64. A **±4 deadband** around the midpoint = stopped.
+- So a TouchOSC pad left off-center keeps that servo **moving** until it hits its end.
+  Pads do **not** spring back on release — **double-tap** a pad to recenter it (stop),
+  or press **HALT ALL**, which sends 64 to every servo.
+- Recordings therefore store *speed over time*; playback repeats the motion, not absolute
+  positions, so drift between loops is expected.
+- Firmware listens to **channel 1** CCs 16–18, 20–22, 24–26 → PCA9685 (I2C 0x40) channels
+  0,1,2,4,5,6,8,9,10. All other CCs (blower, heartbeat, retract, shutoff…) are ignored by
+  the current firmware — see "Known gaps".
+- Pulse range is inverted (`USMIN 2400`, `USMAX 600`) for this actuator model.
+
+Each XY pad is constrained to one axis (N/S/CTR vertical, E/W horizontal, diagonals
+diagonal) by Lua in `touchosc_gen.py` (`_xy_script`).
+
+### Feather firmware
+
+Flash `benmidi_v7/benmidi_v7.ino` with the Arduino IDE (board: Adafruit Feather M4 CAN).
+Libraries: `MIDIUSB`, `Adafruit_NeoPixel`, `Adafruit_PWMServoDriver`. The NeoPixel (pin 8)
+shows the last-moved servo's colour, brightness = CC value. The Channel-2 double-click /
+retract logic is left over from the MIDI Fighter Twister and is never triggered by the Pi
+(blob_monitor forwards everything on channel 1).
 
 ---
 
@@ -204,7 +244,8 @@ is running.
 
 - **Row 1:** `● 192.168.68.197` — `●` = iPad connected, `○` = no devices
 - **Row 2:** Mode — `IDLE` / `REC` / `PLAYING MM:SS/MM:SS` / `PAUSED`
-- **Row 3:** Last servo activity — `S4 063 [████░░░░]`
+- **Row 3:** Last servo activity — `S4 063 [████░░░░]`. The index is **0-based**
+  (`S0` = servo 1/NW … `S8` = servo 9/SE); 64 = stopped.
 
 ---
 
@@ -275,3 +316,20 @@ sent, so recordings made before a direction change still play the old way.
 
 **Pi IP changed**
 - Use `blobpi.local` instead of a hardcoded IP — resolves via mDNS on any network
+
+---
+
+## Known gaps (as of 2026-11-14)
+
+Found by reading the code; none are fixed yet.
+
+- **RETRACT ALL, Blower Hi/Lo, Breathe, Breathing Rate, HB Speed/Bright, Air Shutoff do
+  nothing at the servos.** blob_monitor forwards them to the Feather on ch1, but
+  `benmidi_v7.ino` only maps the 9 servo CCs. They are recorded and played back, though.
+- **HALT ALL feedback isn't sent over OSC.** `_halt_all` sends 64 to the M4 and MIDI
+  feedback only, so another OSC-connected iPad's pads don't visibly recenter (the pressing
+  iPad recenters itself via Lua notify).
+- **Named recordings are invisible to two fallbacks.** `load_latest()` (PLAY with nothing
+  loaded) and the Pi keyboard `[L]` picker only look at `blob_*.mid`, so a fresh boot +
+  PLAY picks the newest *timestamped* file, not `latest.mid` or a named one.
+- **OSC peers are never forgotten** — every IP that ever sent OSC keeps getting feedback.

@@ -1,3 +1,6 @@
+> **HISTORICAL (2026-05, MIDI Fighter Twister / Mac-hub era).** The live system is the
+> Pi + TouchOSC setup in the top-level `README.md`. Kept for firmware background only.
+
 # MIDI Fighter Twister Servo Controller
 
 Arduino-based project for controlling 9 linear servo actuators using a MIDI Fighter Twister controller with dynamic midpoint management and intelligent button controls.

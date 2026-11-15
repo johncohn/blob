@@ -102,6 +102,8 @@ If "blobpi" doesn't show up in Browse: iOS Settings → Privacy & Security → L
 
 - Nudge one servo slider (e.g. S1/NW pad) — the corresponding servo should move; the
   OLED row 3 should show `S0 ### [bar]` updating.
+  Pads set **speed**, not position: the servo keeps moving while the pad is off-center.
+  **Double-tap** the pad to recenter (stop).
 - Check each servo's direction. Servos 2, 3, 5, 6, 9 are reversed in the layout; if any
   move the wrong way, see "Servo direction" in the README.
 - Press **HALT ALL** — all 9 servos should snap to center in one press.

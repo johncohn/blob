@@ -1,3 +1,6 @@
+> **HISTORICAL (2026-05, MIDI Fighter Twister / Mac-hub era).** The live system is the
+> Pi + TouchOSC setup in the top-level `README.md`. Kept for firmware background only.
+
 # Blob — TouchOSC Control Surface
 
 TouchOSC is being evaluated as an alternative to the MIDI Fighter Twister.
