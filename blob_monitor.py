@@ -65,6 +65,10 @@ CC_LOOP      = 43
 CC_CONNECTED = 63   # Pi heartbeat: 127=online, 0=offline; fb_only, never sent to M4
 
 SERVO_CCS  = [16, 17, 18, 20, 21, 22, 24, 25, 26]  # all 9 servo CC numbers
+# Settings for the Feather-generated heartbeat lights and breathing (blower + vent).
+# Their last values are captured at t=0 of every recording and re-sent to the
+# Feather when it reconnects, so playback and reboots restore the same state.
+ENV_CCS    = [32, 33, 34, 35, 38, 41, 42]
 
 CC_NAMES = {
     16: "Servo 0",   17: "Servo 1",   18: "Servo 2",
@@ -239,6 +243,7 @@ class BlobMonitor:
         self._osc_peers      = {}     # ip → last-seen time; for OSC feedback
         self._osc_sock       = None
         self._rec_custom_name = ""   # name set from iPad before recording
+        self._env_state       = {}   # cc → last value sent to the M4, for ENV_CCS
         self.stop_evt  = threading.Event()
         self._play_thr = None
         self._open_midi(in_port, out_port, in_name, out_name)
@@ -477,6 +482,12 @@ class BlobMonitor:
                             self._out_needs_reconnect = False
                             with self.lock:
                                 self._sep(f"OUT reconnected: {p}")
+                                env = dict(self._env_state)
+                            for ecc, eval_ in env.items():
+                                try:
+                                    new_dev.send_message([0xB0 | MIDI_CH, ecc, eval_])
+                                except Exception:
+                                    pass
                             try:
                                 old.close_port()
                             except Exception:
@@ -539,6 +550,8 @@ class BlobMonitor:
 
     def _send_cc(self, cc, val, fb_only=False):
         val = int(val) & 0x7F
+        if not fb_only and cc in ENV_CCS:
+            self._env_state[cc] = val
         if not fb_only:
             try:
                 self.mid_out.send_message([0xB0 | MIDI_CH, cc, val])
@@ -622,6 +635,8 @@ class BlobMonitor:
             else:
                 t_str = "       s"
             self._append_log(t_str, f"ch{ch} {name}", cc, val)
+            if cc in ENV_CCS:
+                self._env_state[cc] = val
             if cc in (16, 17, 18, 20, 21, 22, 24, 25, 26):
                 self._last_servo_cc  = cc
                 self._last_servo_val = val
@@ -648,7 +663,10 @@ class BlobMonitor:
                 self.stop_evt.set()
                 old_thr = self._play_thr
             self.mode      = "RECORDING"
-            self.events    = []
+            # Snapshot light/air settings at t=0 so playback starts from the same state
+            # dict() copy is atomic under the GIL; the playback thread may still be writing
+            env = dict(self._env_state)
+            self.events    = [{"t": 0.0, "cc": c, "val": v} for c, v in sorted(env.items())]
             self.play_pos  = 0.0
             self.rec_start = time.time()
             self._sep("─── REC START ───")

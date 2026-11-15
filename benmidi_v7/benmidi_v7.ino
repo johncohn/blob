@@ -18,6 +18,55 @@
 #define DOUBLE_CLICK_MS 400  // Max time between clicks for double-click (increased for debounce)
 #define RETRACT_TIME_MS 50000 // 50 seconds for full retraction
 
+// ---------- Environment CCs (channel 1, forwarded by blob_monitor on the Pi) ----------
+// Same numbers as the TouchOSC layout. These carry only the slider *settings*;
+// the heartbeat and breathing waveforms are generated here, so recording/playback
+// of the sliders on the Pi reproduces the effect.
+#define CC_BLOWER_HIGH    32   // blower max speed (and constant speed when Breathe is off); 0 = blower off
+#define CC_BREATHE        33   // toggle: >=64 = breathing cycle on
+#define CC_HB_SPEED       34   // heartbeat rate
+#define CC_HB_BRIGHT      35   // heartbeat brightness; 0 = dark
+#define CC_SHUTOFF        38   // >=64 = air shutoff: blower stopped, vent solenoid open
+#define CC_BLOWER_LOW     41   // blower min speed during inhale
+#define CC_BREATHING_RATE 42   // breaths per minute
+
+// ---------- Heartbeat LED pucks (Adafruit 5408 4W RGBW NeoPixel) ----------
+// Chain: Feather → PUCK_REPEATERS dark pucks (one every ~4 ft, regenerate data) → PUCK_HEART lit pucks.
+// Puck 0 is powered from the Feather side (level-shift trick); see README "Heartbeat lights" wiring.
+#define PUCK_PIN          9    // D9 → 330Ω → DIN of puck 0
+#define PUCK_REPEATERS    3    // <<< set to the real number of dark repeater pucks (incl. puck 0)
+#define PUCK_HEART        8    // pulsing pucks at the end of the chain
+#define PUCK_TYPE         (NEO_GRBW + NEO_KHZ800)  // if "red" shows as green, try NEO_RGBW
+#define HB_BPM_MIN        30.0f   // HB SPEED slider at 0
+#define HB_BPM_MAX        180.0f  // HB SPEED slider at 127
+#define HB_LUB_AT         0.06f   // s into the beat: centre of first ("lub") pulse
+#define HB_LUB_W          0.06f   // s: pulse half-width
+#define HB_DUB_W          0.07f
+#define HB_DUB_GAIN       0.6f    // second ("dub") pulse relative brightness
+#define FRAME_MS          20      // LED/air update period (50 Hz)
+
+// ---------- Breathing: blower PWM + vent solenoid ----------
+// Blower: D5 → gate of low-side FET; FET drain pulled up to 12 V → blower control input.
+// The FET inverts (pin HIGH → line 0 V); BLOWER_FET_INVERTS accounts for that.
+// D5 = PA16 = TCC1 WO[0], so the PWM is generated in hardware and keeps running
+// while NeoPixel.show() has interrupts disabled.
+#define BLOWER_PIN        5
+#define BLOWER_MODE_FREQ  1        // 1: speed = frequency (15 kHz slow … 32 kHz fast, 50% duty)
+                                   // 0: speed = duty cycle at BLOWER_DUTY_FREQ
+#define BLOWER_FREQ_MIN   15000.0f
+#define BLOWER_FREQ_MAX   32000.0f
+#define BLOWER_DUTY_FREQ  25000.0f
+#define BLOWER_DUTY_MIN   0.10f    // duty mode only: line duty at slider 1
+#define BLOWER_DUTY_MAX   1.00f    // duty mode only: line duty at slider 127
+#define BLOWER_FET_INVERTS    1
+#define BLOWER_STOP_LINE_HIGH 0    // blower line when stopped: 0 = held at 0 V, 1 = held at 12 V.
+                                   // VERIFY on the bench which level actually stops this blower.
+// Solenoid: D6 → gate of power FET (flyback diode across coil). HIGH = energised = vent open.
+#define SOLENOID_PIN      6
+#define BREATH_PERIOD_SLOW 12.0f   // s per breath at RATE slider 0  (5 breaths/min)
+#define BREATH_PERIOD_FAST 3.0f    // s per breath at RATE slider 127 (20 breaths/min)
+#define INHALE_FRACTION    0.45f   // share of each breath spent inhaling (blower on, vent closed)
+
 // Twister is a 4x4 grid on bank 2 (CC 16-31). Servos occupy the top-left 3x3,
 // so every 4th knob (rightmost column) and the entire bottom row are unmapped.
 //
@@ -65,6 +114,19 @@ uint8_t clickCount[128]; // Count clicks to better detect double-clicks
 // Retraction state
 bool isRetracting[NUM_SERVOS];
 unsigned long retractionStartTime[NUM_SERVOS];
+
+// Environment state (last CC values received; all start at 0 = off/dark)
+Adafruit_NeoPixel pucks = Adafruit_NeoPixel(PUCK_REPEATERS + PUCK_HEART, PUCK_PIN, PUCK_TYPE);
+uint8_t ccBlowerHigh = 0, ccBlowerLow = 0, ccBreathe = 0, ccRate = 0, ccShutoff = 0;
+uint8_t ccHbSpeed = 0, ccHbBright = 0;
+float breathPhase = 0.0f;   // 0..1 through the current breath (inhale first)
+float beatTime    = 0.0f;   // seconds into the current heartbeat
+unsigned long lastFrameUs = 0;
+
+Tcc*     blowerTcc   = nullptr;
+uint8_t  blowerCh    = 0;
+uint32_t blowerPer   = 0;
+uint32_t blowerCc    = 0;
 
 // ---------- Helpers ----------
 static inline void writeServoUS(uint8_t ch, uint16_t us) {
@@ -221,6 +283,122 @@ void checkPendingClicks() {
   }
 }
 
+// ---------- Blower PWM (hardware TCC) ----------
+void blowerInit() {
+  const PinDescription &pd = g_APinDescription[BLOWER_PIN];
+  analogWrite(BLOWER_PIN, 128);   // let the core mux the pin and clock its TCC (GCLK0 = F_CPU)
+  blowerTcc = (Tcc*) GetTC(pd.ulPWMChannel);
+  blowerCh  = GetTCChannelNumber(pd.ulPWMChannel);
+
+  blowerTcc->CTRLA.bit.ENABLE = 0;
+  while (blowerTcc->SYNCBUSY.bit.ENABLE);
+  blowerTcc->CTRLA.reg = TCC_CTRLA_PRESCALER_DIV1 | TCC_CTRLA_PRESCSYNC_GCLK;
+  blowerTcc->WAVE.reg  = TCC_WAVE_WAVEGEN_NPWM;
+  while (blowerTcc->SYNCBUSY.bit.WAVE);
+  blowerPer = (uint32_t)(F_CPU / BLOWER_FREQ_MIN) - 1;
+  blowerTcc->PER.reg = blowerPer;
+  while (blowerTcc->SYNCBUSY.bit.PER);
+  blowerCc = 0;
+  blowerTcc->CC[blowerCh].reg = 0;
+  while (blowerTcc->SYNCBUSY.reg & TCC_SYNCBUSY_CC_Msk);
+  blowerTcc->CTRLA.bit.ENABLE = 1;
+  while (blowerTcc->SYNCBUSY.bit.ENABLE);
+}
+
+// speed < 0 = stop (constant level); otherwise 0..1
+void blowerApply(float speed) {
+  uint32_t per = blowerPer, cc;
+  if (speed < 0.0f) {
+    bool pinHigh = BLOWER_FET_INVERTS ? !BLOWER_STOP_LINE_HIGH : BLOWER_STOP_LINE_HIGH;
+    cc = pinHigh ? per + 1 : 0;           // CC > PER → output never clears → constant HIGH
+  } else {
+    speed = constrain(speed, 0.0f, 1.0f);
+#if BLOWER_MODE_FREQ
+    float f = BLOWER_FREQ_MIN + speed * (BLOWER_FREQ_MAX - BLOWER_FREQ_MIN);
+    per = (uint32_t)(F_CPU / f) - 1;
+    cc  = (per + 1) / 2;                  // 50% duty — unaffected by FET inversion
+#else
+    per = (uint32_t)(F_CPU / BLOWER_DUTY_FREQ) - 1;
+    float lineDuty = BLOWER_DUTY_MIN + speed * (BLOWER_DUTY_MAX - BLOWER_DUTY_MIN);
+    float pinDuty  = BLOWER_FET_INVERTS ? 1.0f - lineDuty : lineDuty;
+    cc = (uint32_t)(pinDuty * (per + 1));
+#endif
+  }
+  if (per == blowerPer && cc == blowerCc) return;
+  // Buffered registers: new period/duty take effect at the next cycle boundary (no glitches)
+  blowerTcc->PERBUF.reg           = per;
+  blowerTcc->CCBUF[blowerCh].reg  = cc;
+  blowerPer = per;
+  blowerCc  = cc;
+}
+
+// ---------- Breathing state machine ----------
+void updateAir(float dt) {
+  bool  ventOpen = false;
+  float speed    = -1.0f;                 // stopped
+
+  if (ccShutoff >= 64) {
+    ventOpen = true;                      // AIR SHUTOFF: stop blower, let the air out
+  } else if (ccBlowerHigh <= 1) {
+    // BLOW HI at zero = blower off, vent closed
+  } else if (ccBreathe < 64) {
+    speed = ccBlowerHigh / 127.0f;        // Breathe off: steady blower at BLOW HI
+  } else {
+    float period = BREATH_PERIOD_SLOW + (BREATH_PERIOD_FAST - BREATH_PERIOD_SLOW) * (ccRate / 127.0f);
+    breathPhase += dt / period;
+    breathPhase -= floorf(breathPhase);
+    if (breathPhase < INHALE_FRACTION) {  // inhale: vent closed, blower swells LOW → HIGH → LOW
+      float p  = breathPhase / INHALE_FRACTION;
+      float lo = ccBlowerLow / 127.0f, hi = ccBlowerHigh / 127.0f;
+      speed = lo + (hi - lo) * sinf(PI * p);
+    } else {                              // exhale: blower stopped, vent open
+      ventOpen = true;
+    }
+  }
+  digitalWrite(SOLENOID_PIN, ventOpen ? HIGH : LOW);
+  blowerApply(speed);
+}
+
+// ---------- Heartbeat ----------
+static inline float hbPulse(float t, float centre, float halfWidth) {
+  float x = (t - centre) / halfWidth;
+  return expf(-x * x);
+}
+
+void updateHeart(float dt) {
+  float bpm    = HB_BPM_MIN + (HB_BPM_MAX - HB_BPM_MIN) * (ccHbSpeed / 127.0f);
+  float period = 60.0f / bpm;
+  beatTime += dt;
+  beatTime = fmodf(beatTime, period);
+  // Pulse widths are in seconds (not fractions of the beat) so fast rates stay visible
+  float dubAt = HB_LUB_AT + min(0.30f, 0.40f * period);
+  float env   = max(hbPulse(beatTime, HB_LUB_AT, HB_LUB_W),
+                    HB_DUB_GAIN * hbPulse(beatTime, dubAt, HB_DUB_W));
+  uint8_t red = Adafruit_NeoPixel::gamma8((uint8_t)(env * ccHbBright * 2.0f));
+
+  for (uint16_t i = 0; i < PUCK_REPEATERS; i++) pucks.setPixelColor(i, 0);   // repeaters stay dark
+  for (uint16_t i = 0; i < PUCK_HEART; i++)
+    pucks.setPixelColor(PUCK_REPEATERS + i, pucks.Color(red, 0, 0, 0));
+  pucks.show();
+}
+
+// Returns true if the CC was an environment control
+bool processEnvCC(uint8_t control, uint8_t value) {
+  switch (control) {
+    case CC_BLOWER_HIGH:    ccBlowerHigh = value; return true;
+    case CC_BLOWER_LOW:     ccBlowerLow  = value; return true;
+    case CC_BREATHING_RATE: ccRate       = value; return true;
+    case CC_SHUTOFF:        ccShutoff    = value; return true;
+    case CC_HB_SPEED:       ccHbSpeed    = value; return true;
+    case CC_HB_BRIGHT:      ccHbBright   = value; return true;
+    case CC_BREATHE:
+      if (value >= 64 && ccBreathe < 64) breathPhase = 0.0f;   // each Breathe-on starts with an inhale
+      ccBreathe = value;
+      return true;
+  }
+  return false;
+}
+
 void processInput(uint8_t control, uint8_t midiValue) {
   if (control >= 128) return;
   uint8_t servoIdx = CC_TO_SERVO[control];
@@ -261,6 +439,26 @@ void processInput(uint8_t control, uint8_t midiValue) {
 }
 
 void setup() {
+  // Air outputs first, so the vent stays closed and the blower stopped from power-up
+  pinMode(SOLENOID_PIN, OUTPUT);
+  digitalWrite(SOLENOID_PIN, LOW);
+  blowerInit();
+  blowerApply(-1.0f);
+
+  // Heartbeat pucks: brief dim-red self-test on the heart string, then dark
+  pucks.begin();
+  pucks.clear();
+  for (uint16_t i = 0; i < PUCK_HEART; i++)
+    pucks.setPixelColor(PUCK_REPEATERS + i, pucks.Color(40, 0, 0, 0));
+  pucks.show();
+  delay(400);
+  pucks.clear();
+  pucks.show();
+
+  // The Feather M4 CAN's onboard NeoPixel has a separate power-enable pin
+  pinMode(PIN_NEOPIXEL_POWER, OUTPUT);
+  digitalWrite(PIN_NEOPIXEL_POWER, HIGH);
+
   Wire.begin();
 
   // ---------- PCA9685 ----------
@@ -314,13 +512,16 @@ void setup() {
 
 void loop() {
   // MIDI over USB (MIDIUSB)
-  midiEventPacket_t rx = MidiUSB.read();
-  if (rx.header != 0) {
-    // Control Change on Channel 1 (0xB0) - knob rotation
+  // Drain every queued packet so a burst (e.g. playback) never lags behind
+  midiEventPacket_t rx;
+  while ((rx = MidiUSB.read()).header != 0) {
+    // Control Change on Channel 1 (0xB0) - servos + environment controls
     if (rx.byte1 == 0xB0) {
       uint8_t control   = rx.byte2;
       uint8_t midiValue = rx.byte3;
-      processInput(control, midiValue);
+      if (!processEnvCC(control, midiValue)) {
+        processInput(control, midiValue);
+      }
     }
     // Control Change on Channel 2 (0xB1) - button press
     else if (rx.byte1 == 0xB1) {
@@ -344,6 +545,15 @@ void loop() {
         resetMidpoint(i);
       }
     }
+  }
+
+  // Heartbeat + breathing at a fixed frame rate
+  unsigned long nowUs = micros();
+  if (nowUs - lastFrameUs >= FRAME_MS * 1000UL) {
+    float dt = (lastFrameUs == 0) ? 0.0f : (nowUs - lastFrameUs) / 1e6f;
+    lastFrameUs = nowUs;
+    updateAir(dt);
+    updateHeart(dt);
   }
 
   MidiUSB.flush();  // send all queued LED feedback in one shot

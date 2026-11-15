@@ -64,8 +64,10 @@ The servos are **speed-controlled, not position-controlled**. In `benmidi_v7.ino
 - Recordings therefore store *speed over time*; playback repeats the motion, not absolute
   positions, so drift between loops is expected.
 - Firmware listens to **channel 1** CCs 16–18, 20–22, 24–26 → PCA9685 (I2C 0x40) channels
-  0,1,2,4,5,6,8,9,10. All other CCs (blower, heartbeat, retract, shutoff…) are ignored by
-  the current firmware — see "Known gaps".
+  0,1,2,4,5,6,8,9,10. The heartbeat and air CCs are handled separately — see
+  "Heartbeat lights and breathing" below.
+- **RETRACT ALL** works in the surface, not the firmware: its Lua drives every pad to its
+  full-speed end, and those pad CCs move the servos. Press HALT ALL to stop.
 - Pulse range is inverted (`USMIN 2400`, `USMAX 600`) for this actuator model.
 
 Each XY pad is constrained to one axis (N/S/CTR vertical, E/W horizontal, diagonals
@@ -78,6 +80,77 @@ Libraries: `MIDIUSB`, `Adafruit_NeoPixel`, `Adafruit_PWMServoDriver`. The NeoPix
 shows the last-moved servo's colour, brightness = CC value. The Channel-2 double-click /
 retract logic is left over from the MIDI Fighter Twister and is never triggered by the Pi
 (blob_monitor forwards everything on channel 1).
+
+---
+
+## Heartbeat lights and breathing
+
+All on the Feather (`benmidi_v7.ino`). The iPad sliders only send **settings**
+(rate, brightness, speeds); the Feather generates the heartbeat and breathing waveforms
+itself. The Pi already forwards, records and plays back those CCs like the servo CCs.
+It also stores the current settings at t=0 of each recording, and re-sends them when
+the Feather reconnects.
+
+### Feather pins
+
+| Pin | Use | Notes |
+|---|---|---|
+| D5 | Blower PWM → gate of low-side FET | Hardware timer (TCC1); drain pulled up to 12 V (~1 kΩ) = blower control line |
+| D6 | Vent solenoid → gate of power FET | HIGH = valve open. Logic-level FET, 10 kΩ gate pull-down, flyback diode on coil |
+| D9 | Heartbeat puck data → 330 Ω → puck 0 DIN | |
+| SDA/SCL | PCA9685 servo driver | unchanged |
+
+### Behaviour
+
+| Control | CC | Effect |
+|---|---|---|
+| HB SPEED | 34 | 30 → 180 BPM. Double "lub-dub" pulse per beat |
+| HB BRIGHT | 35 | Peak red brightness; 0 = dark |
+| BLOW HI | 32 | Breathe off: steady blower speed. Breathe on: peak inhale speed. **0 = blower off** |
+| BREATHE | 33 | On = breathing cycle; each switch-on starts with an inhale |
+| BLOW LO | 41 | Blower speed at the start/end of each inhale |
+| RATE | 42 | 12 s per breath (5/min) → 3 s (20/min) |
+| AIR SHUTOFF | 38 | Upper half = blower stopped + vent open (overrides everything) |
+
+Breath cycle: **inhale** (first 45%) = vent closed, blower swells BLOW LO → BLOW HI → BLOW LO;
+**exhale** (remaining 55%) = blower stopped, vent open. At power-up everything is
+off/dark/closed until the iPad sends values. The Feather keeps going with the last settings
+if the Pi drops. Constants such as BPM range, breath period range, inhale share and pulse
+shape are `#define`s at the top of the sketch.
+
+### Puck chain wiring (Adafruit 5408 4 W RGBW)
+
+```
+Feather D9 ─330Ω─► puck 0 (dark) ─► puck 1 (dark) ─► … ─► 8 heart pucks (pulse red)
+             +5V from Feather USB pin      +5V from big supply at every puck
+             through a 1N4001 (~4.3 V)     (positives NOT joined to the Feather side)
+GND: common everywhere (Feather GND = big supply GND), heavy wire.
+```
+
+- **Puck 0 is the level shifter:** at ~4.3 V supply it accepts the Feather's 3.3 V data and
+  re-drives it at 4.3 V, which the 5 V pucks accept. The firmware keeps it dark, so it
+  draws almost nothing from the Pi's USB.
+- **Do not carry +5 V from puck 0's output to puck 1.** Run only DOUT and GND onward. The
+  pucks pass +5 V through, so a connected wire would tie the Pi's USB supply to the big supply.
+- Repeater pucks every ~4 ft regenerate data and stay dark. Set `PUCK_REPEATERS` in the
+  sketch to the real count, including puck 0.
+- Power: red only ≈ 0.2 A per heart puck at full (≈1.6 A for 8). Size the supply for
+  all pucks at full white (0.8 A each) in case of a data glitch. Fit 1000 µF across the
+  supply at the heart string.
+- On boot the heart string flashes dim red for 0.4 s as a chain check. If it flashes
+  green, change `PUCK_TYPE` to `NEO_RGBW`.
+
+### Blower and solenoid — verify on the bench before trusting
+- **Blower stop level.** With a pulled-up open-drain line, a reset or unpowered Feather
+  leaves the line at 12 V. Check what the blower does at constant 12 V and at constant 0 V.
+  Set `BLOWER_STOP_LINE_HIGH` to whichever level stops it.
+- **Speed encoding.** The firmware assumes 15 kHz = slow and 32 kHz = fast at 50% duty
+  (`BLOWER_MODE_FREQ 1`). Most EC fans use duty cycle instead. If a scope on the stock
+  controller shows a fixed frequency with varying duty, set `BLOWER_MODE_FREQ 0`
+  (duty range `BLOWER_DUTY_MIN/MAX`). The FET inversion is already handled.
+- **Solenoid (US Solid USS2-00103, 12 V NC, 1½").** Large valves like this are often
+  pilot-operated and need some pressure difference to open fully. Confirm it really vents at
+  balloon pressure. Its FET must be logic-level (fully on at 3.3 V gate, e.g. IRLB8721).
 
 ---
 
@@ -323,9 +396,10 @@ sent, so recordings made before a direction change still play the old way.
 
 Found by reading the code; none are fixed yet.
 
-- **RETRACT ALL, Blower Hi/Lo, Breathe, Breathing Rate, HB Speed/Bright, Air Shutoff do
-  nothing at the servos.** blob_monitor forwards them to the Feather on ch1, but
-  `benmidi_v7.ino` only maps the 9 servo CCs. They are recorded and played back, though.
+- **Heartbeat/breathing firmware is untested on hardware** (written 2026-11-14). Its logic
+  passes the host-side tests in `tests/run.sh`.
+  See the bench checks under "Heartbeat lights and breathing".
+- **RETRACT ALL never stops by itself.** The pads stay at full speed until HALT ALL is pressed.
 - **HALT ALL feedback isn't sent over OSC.** `_halt_all` sends 64 to the M4 and MIDI
   feedback only, so another OSC-connected iPad's pads don't visibly recenter (the pressing
   iPad recenters itself via Lua notify).
