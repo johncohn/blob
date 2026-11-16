@@ -7,14 +7,16 @@ MidiUSB_ MidiUSB;
 #include "../../benmidi_v7/benmidi_v7.ino"
 int fails=0;
 #define CHECK(c,...) do{ if(!(c)){fails++; printf("FAIL %s:%d ",__FILE__,__LINE__); printf(__VA_ARGS__); printf("\n");} }while(0)
-bool blowerStopped(){ return blowerCc==0 || blowerCc>blowerPer; }
+// duty the blower sees on its control line (FET inverts the pin)
+double lineDuty(){ double pin=std::min<double>(blowerCc,blowerPer+1)/(blowerPer+1); return BLOWER_FET_INVERTS? 1-pin : pin; }
+bool blowerStopped(){ return lineDuty()<1e-6; }
 double blowerFreq(){ return (double)F_CPU/(blowerPer+1); }
 uint8_t heartRed(){ return (pucks.px[PUCK_REPEATERS]>>16)&0xff; }
 void run(double secs, void(*f)()=nullptr){ unsigned long end=g_us+(unsigned long)(secs*1e6); while(g_us<end){ loop(); if(f) f(); } }
 // invariants checked every loop
-bool everBlowWhileVent=false; double fmin_=1e9,fmax_=0;
+bool everBlowWhileVent=false; double fmin_=1e9,fmax_=0, dmin_=2,dmax_=-1;
 void inv(){ if(g_pin[SOLENOID_PIN] && !blowerStopped()) everBlowWhileVent=true;
-  if(!blowerStopped()){ fmin_=std::min(fmin_,blowerFreq()); fmax_=std::max(fmax_,blowerFreq()); }
+  if(!blowerStopped()){ fmin_=std::min(fmin_,blowerFreq()); fmax_=std::max(fmax_,blowerFreq()); dmin_=std::min(dmin_,lineDuty()); dmax_=std::max(dmax_,lineDuty()); }
   for(int i=0;i<PUCK_REPEATERS;i++) if(pucks.px[i]) { everBlowWhileVent=everBlowWhileVent; printf("FAIL repeater lit\n"); fails++; } }
 int main(){
   g_APinDescription[BLOWER_PIN].ulPWMChannel=(1<<8)|0;
@@ -22,22 +24,25 @@ int main(){
   // power-up state
   CHECK(g_pin[SOLENOID_PIN]==LOW,"vent closed at boot");
   CHECK(blowerStopped(),"blower stopped at boot");
-  CHECK(blowerPer==7999,"per=%u",blowerPer);
-  CHECK(g_tcc1.CC[blowerCh].reg==0,"init cc");
+  CHECK(blowerPer==4799,"per=%u (25 kHz)",blowerPer);
+  CHECK(BLOWER_MODE_FREQ==0,"duty mode (fantest)");
   CHECK(pucks.px[PUCK_REPEATERS]==0,"pucks dark after self-test");
   run(1.0,inv); CHECK(heartRed()==0 && blowerStopped(),"idle stays off");
 
   // steady blower, breathe off
   cc(CC_BLOWER_HIGH,127); run(0.1,inv);
-  CHECK(!blowerStopped() && fabs(blowerFreq()-32000)<20,"steady max f=%.0f",blowerFreq());
-  CHECK(blowerCc==(blowerPer+1)/2,"50%% duty");
+  CHECK(fabs(blowerFreq()-25000)<5,"fixed 25 kHz f=%.0f",blowerFreq());
+  CHECK(lineDuty()>0.999,"slider 127 = 100%% line duty (%.3f)",lineDuty());
+  CHECK(blowerCc==0,"inverted: pin held LOW at full speed");
+  cc(CC_BLOWER_HIGH,38); run(0.1,inv); CHECK(fabs(lineDuty()-0.30)<0.01,"slider 38 ~30%% (%.3f)",lineDuty());
+  CHECK(fabs(blowerCc/(double)(blowerPer+1)-0.70)<0.01,"pin duty = 100-speed");
   CHECK(g_pin[SOLENOID_PIN]==LOW,"vent closed when steady");
   cc(CC_BLOWER_HIGH,1); run(0.1,inv); CHECK(blowerStopped(),"BLOW HI<=1 stops");
 
   // breathing: hi=127 lo=0 rate=127 (3 s period, inhale 1.35 s)
   cc(CC_BLOWER_HIGH,127); cc(CC_BLOWER_LOW,0); cc(CC_BREATHING_RATE,127); cc(CC_BREATHE,127);
   int transitions=0, last=-1; double openTime=0, t0=g_us/1e6;
-  fmin_=1e9; fmax_=0;
+  fmin_=1e9; fmax_=0; dmin_=2; dmax_=-1;
   run(9.0,[](){ inv(); });
   // count vent transitions by sampling
   g_us+=0; 
@@ -46,7 +51,8 @@ int main(){
     CHECK(opens==3,"3 breaths in 9 s, got %d",opens);
     CHECK(fabs(open/9.0-0.55)<0.03,"exhale share %.3f",open/9.0); }
   CHECK(!everBlowWhileVent,"blower never runs while vent open");
-  CHECK(fmin_<15500 && fmax_>31500,"inhale sweeps %.0f..%.0f",fmin_,fmax_);
+  CHECK(dmin_<0.05 && dmax_>0.98,"inhale sweeps duty %.3f..%.3f",dmin_,dmax_);
+  CHECK(fabs(fmin_-25000)<5 && fabs(fmax_-25000)<5,"carrier stays 25 kHz");
   // rate change mid-breath keeps phase continuous
   float ph=breathPhase; cc(CC_BREATHING_RATE,0); run(0.021,inv); CHECK(std::min(fabs(breathPhase-ph),1-fabs(breathPhase-ph))<0.02,"phase jump %f->%f",ph,breathPhase);
   // shutoff overrides

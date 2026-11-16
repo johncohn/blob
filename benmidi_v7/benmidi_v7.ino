@@ -51,16 +51,20 @@
 // D5 = PA16 = TCC1 WO[0], so the PWM is generated in hardware and keeps running
 // while NeoPixel.show() has interrupts disabled.
 #define BLOWER_PIN        5
-#define BLOWER_MODE_FREQ  1        // 1: speed = frequency (15 kHz slow … 32 kHz fast, 50% duty)
-                                   // 0: speed = duty cycle at BLOWER_DUTY_FREQ
+// Bench-verified with alia_blinky-main/fantest: fixed 25 kHz carrier, speed = duty the
+// blower sees on its control wire (0-100 %); the 15-32 kHz on the label is the accepted
+// carrier range, not the speed control. Line at 0 V = stopped, line at pull-up = full.
+// Note: while the Feather is resetting/uploading the pin floats, the FET is off and the
+// pull-up runs the blower at FULL speed briefly (same as fantest).
+#define BLOWER_MODE_FREQ  0        // 0: speed = duty cycle at BLOWER_DUTY_FREQ (bench-verified)
+                                   // 1: speed = frequency (15 kHz slow … 32 kHz fast, 50% duty) — not used
 #define BLOWER_FREQ_MIN   15000.0f
 #define BLOWER_FREQ_MAX   32000.0f
 #define BLOWER_DUTY_FREQ  25000.0f
-#define BLOWER_DUTY_MIN   0.10f    // duty mode only: line duty at slider 1
-#define BLOWER_DUTY_MAX   1.00f    // duty mode only: line duty at slider 127
-#define BLOWER_FET_INVERTS    1
-#define BLOWER_STOP_LINE_HIGH 0    // blower line when stopped: 0 = held at 0 V, 1 = held at 12 V.
-                                   // VERIFY on the bench which level actually stops this blower.
+#define BLOWER_DUTY_MIN   0.00f    // line duty at slider 0 (slider maps straight to 0-100 %)
+#define BLOWER_DUTY_MAX   1.00f    // line duty at slider 127
+#define BLOWER_FET_INVERTS    1    // pin duty = 100 % - line duty (low-side N-FET)
+#define BLOWER_STOP_LINE_HIGH 0    // stopped = control line held at 0 V (fantest 0 %)
 // Solenoid: D6 → gate of power FET (flyback diode across coil). HIGH = energised = vent open.
 #define SOLENOID_PIN      6
 #define BREATH_PERIOD_SLOW 12.0f   // s per breath at RATE slider 0  (5 breaths/min)
@@ -295,7 +299,7 @@ void blowerInit() {
   blowerTcc->CTRLA.reg = TCC_CTRLA_PRESCALER_DIV1 | TCC_CTRLA_PRESCSYNC_GCLK;
   blowerTcc->WAVE.reg  = TCC_WAVE_WAVEGEN_NPWM;
   while (blowerTcc->SYNCBUSY.bit.WAVE);
-  blowerPer = (uint32_t)(F_CPU / BLOWER_FREQ_MIN) - 1;
+  blowerPer = (uint32_t)(F_CPU / (BLOWER_MODE_FREQ ? BLOWER_FREQ_MIN : BLOWER_DUTY_FREQ)) - 1;
   blowerTcc->PER.reg = blowerPer;
   while (blowerTcc->SYNCBUSY.bit.PER);
   blowerCc = 0;

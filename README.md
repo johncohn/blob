@@ -75,8 +75,25 @@ diagonal) by Lua in `touchosc_gen.py` (`_xy_script`).
 
 ### Feather firmware
 
-Flash `benmidi_v7/benmidi_v7.ino` with the Arduino IDE (board: Adafruit Feather M4 CAN).
-Libraries: `MIDIUSB`, `Adafruit_NeoPixel`, `Adafruit_PWMServoDriver`. The NeoPixel (pin 8)
+Flash `benmidi_v7/benmidi_v7.ino` (board: Adafruit Feather M4 CAN).
+Libraries: `MIDIUSB`, `Adafruit_NeoPixel`, `Adafruit_PWMServoDriver`.
+
+Flashing from the Mac (the normal `arduino-cli upload` / IDE Upload fails with
+"No device found" on this setup, so use the UF2 drive instead):
+1. Move the Feather's USB from the Pi to the Mac.
+2. Double-tap the Feather's reset button: LED goes green and a `FTHRCANBOOT` drive mounts.
+3. Build and copy:
+   ```bash
+   arduino-cli compile -b adafruit:samd:adafruit_feather_m4_can --output-dir /tmp/bm benmidi_v7
+   python3 uf2conv.py -c -b 0x4000 -f 0x55114460 -o /tmp/bm/benmidi_v7.uf2 /tmp/bm/benmidi_v7.ino.bin
+   cp /tmp/bm/benmidi_v7.uf2 /Volumes/FTHRCANBOOT/
+   ```
+   (`uf2conv.py` is Microsoft's converter; a copy ships with the RP2040 Arduino core under
+   `~/Library/Arduino15/packages/rp2040/hardware/rp2040/*/tools/`.) The drive vanishes when
+   it's done and the board restarts.
+4. Plug the Feather back into the Pi. blob-monitor reconnects by itself within a few seconds.
+
+ The NeoPixel (pin 8)
 shows the last-moved servo's colour, brightness = CC value. The Channel-2 double-click /
 retract logic is left over from the MIDI Fighter Twister and is never triggered by the Pi
 (blob_monitor forwards everything on channel 1).
@@ -145,13 +162,13 @@ GND: common everywhere (Feather GND = big supply GND), heavy wire.
   green, change `PUCK_TYPE` to `NEO_RGBW`.
 
 ### Blower and solenoid — verify on the bench before trusting
-- **Blower stop level.** With a pulled-up open-drain line, a reset or unpowered Feather
-  leaves the line at 12 V. Check what the blower does at constant 12 V and at constant 0 V.
-  Set `BLOWER_STOP_LINE_HIGH` to whichever level stops it.
-- **Speed encoding.** The firmware assumes 15 kHz = slow and 32 kHz = fast at 50% duty
-  (`BLOWER_MODE_FREQ 1`). Most EC fans use duty cycle instead. If a scope on the stock
-  controller shows a fixed frequency with varying duty, set `BLOWER_MODE_FREQ 0`
-  (duty range `BLOWER_DUTY_MIN/MAX`). The FET inversion is already handled.
+- **Speed encoding (bench-verified with `alia_blinky-main/fantest`).** Fixed 25 kHz
+  carrier; speed = duty cycle on the blower's control line, 0–100 % (the label's 15–32 kHz
+  is the accepted carrier range, not the speed control). Slider 0–127 maps straight to
+  0–100 %; the FET inverts, so the pin gets 100 % − speed. Stopped = line held at 0 V.
+- **Full-speed burst on reset.** During upload, reset or early boot the pin floats, the FET
+  is off and the pull-up drives the line to 12 V = full speed. Expect a short burst; a
+  10 kΩ pull-up from the FET gate to 3.3 V would hold the blower stopped instead.
 - **Solenoid (US Solid USS2-00103, 12 V NC, 1½").** Large valves like this are often
   pilot-operated and need some pressure difference to open fully. Confirm it really vents at
   balloon pressure. Its FET must be logic-level (fully on at 3.3 V gate, e.g. IRLB8721).
@@ -187,14 +204,19 @@ Service commands:
 ```bash
 sudo systemctl status blob-monitor
 sudo systemctl restart blob-monitor
-journalctl -u blob-monitor -f       # live log
+journalctl -u blob-monitor -f       # live log (needs sudo)
 ```
 
 Deploy updated `blob_monitor.py`:
 ```bash
+ssh pi@blobpi.local 'cp /home/pi/blob_monitor.py /home/pi/blob_monitor.py.bak'
 scp blob_monitor.py pi@blobpi.local:/home/pi/blob_monitor.py
-ssh pi@blobpi.local 'sudo systemctl restart blob-monitor'
+# restart: the service runs as user pi with Restart=always, so no sudo is needed —
+# kill the process and systemd starts the new code ~5 s later
+ssh pi@blobpi.local 'kill $(systemctl show -p MainPID --value blob-monitor)'
 ```
+(`sudo` over a non-interactive ssh — e.g. Claude Code's `!` prompt — fails because it
+can't ask for the password; use the `kill` form or `ssh -t` from a real terminal.)
 
 ---
 
@@ -369,7 +391,11 @@ sent, so recordings made before a direction change still play the old way.
   `aconnect -l` should show "Feather M4 CAN". If `lsusb` shows only the root hub, check
   the OTG cable and make sure USB-gadget mode is not enabled in `/boot/firmware/cmdline.txt`
 - Check the servos' own power supply is on
-- M4 auto-reconnects if USB is power-cycled
+- M4 auto-reconnects if USB is unplugged/replugged or power-cycled: every 2 s blob-monitor
+  checks `aconnect -l` and re-opens its output if the link to the Feather was dropped
+  (before 2026-11-15 a replug silently left the servos dead until a restart).
+  Manual fix if it ever sticks: `aconnect -l` → find "RtMidiOut Client" (e.g. 130) and
+  "Feather M4 CAN" (e.g. 20), then `aconnect 130:0 20:0`
 
 **Some servos move the wrong way**
 - See "Servo direction" above — edit `invert` in `touchosc_gen.py`, regenerate, re-AirDrop
@@ -396,13 +422,14 @@ sent, so recordings made before a direction change still play the old way.
 
 ---
 
-## Known gaps (as of 2026-11-14)
+## Known gaps (as of 2026-11-15)
 
 Found by reading the code; none are fixed yet.
 
-- **Heartbeat/breathing firmware is untested on hardware** (written 2026-11-14). Its logic
-  passes the host-side tests in `tests/run.sh`.
-  See the bench checks under "Heartbeat lights and breathing".
+- **Heartbeat/breathing only partly tested on hardware.** The firmware is flashed and the
+  servos work with it (2026-11-15); the blower duty-cycle control matches the bench-tested
+  `fantest` sketch but hasn't been run from TouchOSC yet, and the pucks and solenoid aren't
+  wired yet. See the bench checks under "Heartbeat lights and breathing".
 - **RETRACT ALL never stops by itself.** The pads stay at full speed until HALT ALL is pressed.
 - **HALT ALL feedback isn't sent over OSC.** `_halt_all` sends 64 to the M4 and MIDI
   feedback only, so another OSC-connected iPad's pads don't visibly recenter (the pressing
