@@ -67,9 +67,18 @@
 #define BLOWER_STOP_LINE_HIGH 0    // stopped = control line held at 0 V (fantest 0 %)
 // Solenoid: D6 → gate of power FET (flyback diode across coil). HIGH = energised = vent open.
 #define SOLENOID_PIN      6
-#define BREATH_PERIOD_SLOW 12.0f   // s per breath at RATE slider 0  (5 breaths/min)
-#define BREATH_PERIOD_FAST 3.0f    // s per breath at RATE slider 127 (20 breaths/min)
-#define INHALE_FRACTION    0.45f   // share of each breath spent inhaling (blower on, vent closed)
+// One breath (times in seconds; RATE scales only the hold and the vent-open time):
+//   ramp up LO→HI (BLOW_RAMP_UP) · hold HI · ramp down HI→LO (BLOW_RAMP_DOWN) · blower stop
+//   · wait SPINDOWN_WAIT with the vent still closed · vent open (exhale)
+//   · vent closes VENT_CLOSE_LEAD before the next ramp up.
+#define BREATH_PERIOD_SLOW 40.0f   // s per breath at RATE slider 0   (1.5 breaths/min)
+#define BREATH_PERIOD_FAST 6.0f    // s per breath at RATE slider 127 (10 breaths/min)
+                                   // slider is exponential: 64 ≈ 15.5 s
+#define INHALE_FRACTION    0.50f   // share of each breath with the blower running (ramps included)
+#define BLOW_RAMP_UP       0.4f    // s, LO → HI
+#define BLOW_RAMP_DOWN     0.4f    // s, HI → LO, then stop
+#define SPINDOWN_WAIT      1.5f    // s the blower must be stopped before the vent may open
+#define VENT_CLOSE_LEAD    0.3f    // s the vent must be closed before the blower may start
 
 // Twister is a 4x4 grid on bank 2 (CC 16-31). Servos occupy the top-left 3x3,
 // so every 4th knob (rightmost column) and the entire bottom row are unmapped.
@@ -124,6 +133,8 @@ Adafruit_NeoPixel pucks = Adafruit_NeoPixel(PUCK_REPEATERS + PUCK_HEART, PUCK_PI
 uint8_t ccBlowerHigh = 0, ccBlowerLow = 0, ccBreathe = 0, ccRate = 0, ccShutoff = 0;
 uint8_t ccHbSpeed = 0, ccHbBright = 0;
 float breathPhase = 0.0f;   // 0..1 through the current breath (inhale first)
+float blowerOffFor = 1e6f;  // s since the blower last ran   (interlock: vent opens only after SPINDOWN_WAIT)
+float ventShutFor  = 1e6f;  // s since the vent last was open (interlock: blower starts only after VENT_CLOSE_LEAD)
 float beatTime    = 0.0f;   // seconds into the current heartbeat
 unsigned long lastFrameUs = 0;
 
@@ -337,28 +348,47 @@ void blowerApply(float speed) {
 }
 
 // ---------- Breathing state machine ----------
+// Blower speed for time t (s) into a breath whose blower-on window is `on` seconds long.
+float breathSpeed(float t, float on, float lo, float hi) {
+  float up = fminf(BLOW_RAMP_UP, on * 0.5f), down = fminf(BLOW_RAMP_DOWN, on * 0.5f);
+  if (t < up)        return lo + (hi - lo) * (t / up);
+  if (t > on - down) return lo + (hi - lo) * ((on - t) / down);
+  return hi;
+}
+
 void updateAir(float dt) {
   bool  ventOpen = false;
   float speed    = -1.0f;                 // stopped
 
   if (ccShutoff >= 64) {
-    ventOpen = true;                      // AIR SHUTOFF: stop blower, let the air out
+    ventOpen = true;                      // AIR SHUTOFF: stop blower, let the air out (after spin-down)
   } else if (ccBlowerHigh <= 1) {
     // BLOW HI at zero = blower off, vent closed
   } else if (ccBreathe < 64) {
     speed = ccBlowerHigh / 127.0f;        // Breathe off: steady blower at BLOW HI
   } else {
-    float period = BREATH_PERIOD_SLOW + (BREATH_PERIOD_FAST - BREATH_PERIOD_SLOW) * (ccRate / 127.0f);
+    // exponential RATE: equal slider steps give equal ratios of breath length
+    float period = BREATH_PERIOD_SLOW * powf(BREATH_PERIOD_FAST / BREATH_PERIOD_SLOW, ccRate / 127.0f);
     breathPhase += dt / period;
     breathPhase -= floorf(breathPhase);
-    if (breathPhase < INHALE_FRACTION) {  // inhale: vent closed, blower swells LOW → HIGH → LOW
-      float p  = breathPhase / INHALE_FRACTION;
-      float lo = ccBlowerLow / 127.0f, hi = ccBlowerHigh / 127.0f;
-      speed = lo + (hi - lo) * sinf(PI * p);
-    } else {                              // exhale: blower stopped, vent open
-      ventOpen = true;
-    }
+    float t   = breathPhase * period;
+    float on  = INHALE_FRACTION * period;
+    if (t < on) {                          // inhale: vent closed, ramp up · hold · ramp down
+      speed = breathSpeed(t, on, ccBlowerLow / 127.0f, ccBlowerHigh / 127.0f);
+    } else if (t < period - VENT_CLOSE_LEAD) {
+      ventOpen = true;                     // exhale (interlock below holds it shut during spin-down)
+    }                                      // else: vent closed, blower still off — ready for next inhale
   }
+
+  // Interlocks, whatever asked for the change (breathing, shutoff, sliders):
+  // never open the vent until the blower has been stopped SPINDOWN_WAIT,
+  // never start the blower until the vent has been shut VENT_CLOSE_LEAD.
+  if (speed >= 0.0f && ventShutFor < VENT_CLOSE_LEAD) speed = -1.0f;
+  if (ventOpen && (speed >= 0.0f || blowerOffFor < SPINDOWN_WAIT)) ventOpen = false;
+
+  blowerOffFor = (speed >= 0.0f) ? 0.0f : blowerOffFor + dt;
+  ventShutFor  = ventOpen ? 0.0f : ventShutFor + dt;
+
   digitalWrite(SOLENOID_PIN, ventOpen ? HIGH : LOW);
   blowerApply(speed);
 }

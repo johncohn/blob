@@ -19,7 +19,7 @@ Right panel (x 702–1024):
     BLOWER HIGH fader   CC 32
     BLOWER LOW  fader   CC 41  (greyed when breathe off)
     BREATHING RATE fader CC 42  (greyed when breathe off)
-  AIR SHUTOFF fader      CC 38
+  AIR SHUTOFF toggle     CC 38  (compass layout; on = blower stopped + vent solenoid on)
   HEARTBEAT header
     HEARTBEAT fader      CC 34
     HEART BRIGHT fader   CC 35
@@ -1103,13 +1103,14 @@ def build_compass_layout():
                        'rec_filename', 'SET')
 
     # ── right column ──────────────────────────────────────────────────────────
-    # Row 1: BREATHE toggle + AIR SHUTOFF fader  (same line, half-width each)
+    # Row 1: BREATHE toggle + AIR SHUTOFF toggle  (same line, half-width each)
+    # AIR SHUTOFF is on/off (0/127): on = blower stopped + vent solenoid energized (D6).
     BRH = 74
     button(cv, 'breathe', RX,       y0, RW2, BRH, CC_BREATHE,
            toggle=True, rgb=(0.20, 0.55, 0.40), script=breathe_script, osc=True)
     label(cv, 'lbl_breathe', RX,    y0+BRH+2, RW2, 12, 'BREATHE',     size=10, align=2)
-    fader(cv, 'shutoff', RX+RW2+8,  y0, RW2, BRH, CC_SHUTOFF,
-          default=0.0, rgb=(0.70, 0.15, 0.70), osc=True)
+    button(cv, 'shutoff', RX+RW2+8, y0, RW2, BRH, CC_SHUTOFF,
+           toggle=True, rgb=(0.70, 0.15, 0.70), osc=True)
     label(cv, 'lbl_shutoff', RX+RW2+8, y0+BRH+2, RW2, 12, 'AIR SHUTOFF', size=10, align=2)
 
     # Row 2: BLOWER header + 3 faders  (y0 + 30+12+44 = 812)

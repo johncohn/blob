@@ -28,6 +28,11 @@ Kinetic art piece: iPad TouchOSC → Pi Zero 2 W (`blob_monitor.py`) → Feather
   (MIDI) and `/blob/cc/{n}` float 0–1 to UDP :9000 (OSC).
 - Every surface control sends MIDI **and** OSC; keep both paths in sync when changing CCs.
 - Filenames: never expose `.mid` to the user; `_strip_mid` everywhere.
+- Air safety (`updateAir` in benmidi_v7.ino): the vent never opens until the blower has been
+  stopped `SPINDOWN_WAIT`; the blower never starts until the vent has been shut
+  `VENT_CLOSE_LEAD`. These interlocks run after every mode (breathe, steady, AIR SHUTOFF) —
+  keep any new air behaviour above them, and keep the tests in `tests/firmware/test.cpp`.
+- AIR SHUTOFF (CC 38) is a toggle button in the compass surface, not a fader.
 
 ## Deploy / test
 - Pi: `ssh pi@blobpi.local` (key auth from this Mac; sudo needs the password — ask the user).
@@ -35,8 +40,9 @@ Kinetic art piece: iPad TouchOSC → Pi Zero 2 W (`blob_monitor.py`) → Feather
   `ssh pi@blobpi.local 'kill $(systemctl show -p MainPID --value blob-monitor)'`
   (runs as pi, `Restart=always`, back in ~5 s). Check with `aconnect -l` that
   "RtMidiOut Client" is "Connecting To" the Feather. `journalctl` needs sudo.
-- Flash Feather: `arduino-cli upload` fails ("No device found"); user moves USB to the Mac
-  and double-taps reset (`/Volumes/FTHRCANBOOT`), then compile with `--output-dir`, convert
+- Flash Feather: `arduino-cli upload` fails ("No device found"); user moves USB to the Mac;
+  open the port at 1200 baud (python termios, see README) or have the user double-tap reset
+  → `/Volumes/FTHRCANBOOT`, then compile with `--output-dir`, convert
   with `uf2conv.py -c -b 0x4000 -f 0x55114460` (in the rp2040 core's tools dir) and `cp`
   the .uf2 onto the drive. Steps in README "Feather firmware".
 - `tests/run.sh` — host-side checks, no hardware: firmware logic compiled against mocks
