@@ -30,7 +30,7 @@ Raspberry Pi setup:
     Run via monitor.sh for name-based port matching across reboots.
 """
 
-import argparse, curses, re, shutil, socket, subprocess, sys, threading, time
+import argparse, curses, os, re, shutil, socket, subprocess, sys, threading, time
 
 try:
     import mido
@@ -467,6 +467,8 @@ class BlobMonitor:
         """Background: reopen mid_out when M4 disconnects (USB power cycle)."""
         while True:
             time.sleep(2)
+            if not self._out_needs_reconnect and self._out_link_dropped():
+                self._out_needs_reconnect = True
             if not self._out_needs_reconnect:
                 continue
             try:
@@ -498,6 +500,30 @@ class BlobMonitor:
                 pass
             except Exception:
                 pass
+
+    def _out_link_dropped(self):
+        """True when ALSA shows our RtMidiOut client with no subscriber.
+
+        Unplugging the M4 silently drops the subscription; send_message keeps
+        succeeding, so exceptions alone never trigger a reconnect.
+        """
+        if not shutil.which("aconnect"):
+            return False
+        try:
+            r = subprocess.run(["aconnect", "-l"], capture_output=True, text=True, timeout=5)
+        except Exception:
+            return False
+        pid = f"pid={os.getpid()}]"
+        lines = r.stdout.splitlines()
+        for i, line in enumerate(lines):
+            if line.startswith("client ") and "RtMidiOut" in line and pid in line:
+                for nxt in lines[i + 1:]:
+                    if nxt.startswith("client "):
+                        break
+                    if "Connecting To:" in nxt:
+                        return False
+                return True
+        return False
 
     def _pick_port(self, dev, is_out, explicit=None, name_hint=None):
         ports = dev.get_ports()

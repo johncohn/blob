@@ -71,4 +71,24 @@ t=threading.Thread(target=hammer); t.start()
 for _ in range(2000):
     m3.mode="IDLE"; m3._start_record()
 stop.set(); t.join()
+# dropped ALSA subscription (M4 replugged) is detected from `aconnect -l`
+ACON = """client 20: 'Feather M4 CAN' [type=kernel,card=1]
+    0 'Feather M4 CAN MIDI 1'
+client 130: 'RtMidiOut Client' [type=user,pid=4242]
+    0 'RtMidi output   '
+%sclient 131: 'BlobFeedback' [type=user,pid=4242]
+    0 'BlobFeedback    '
+"""
+class _R: pass
+def _acon(txt):
+    def run(*a, **k):
+        r=_R(); r.stdout=txt; return r
+    return run
+o_run,o_pid,o_which=bm.subprocess.run,bm.os.getpid,bm.shutil.which
+bm.os.getpid=lambda:4242; bm.shutil.which=lambda x:"/usr/bin/aconnect"
+bm.subprocess.run=_acon(ACON % "\tConnecting To: 20:0\n")
+assert m3._out_link_dropped() is False
+bm.subprocess.run=_acon(ACON % "")
+assert m3._out_link_dropped() is True
+bm.subprocess.run,bm.os.getpid,bm.shutil.which=o_run,o_pid,o_which
 print("ALL MONITOR TESTS PASSED")
